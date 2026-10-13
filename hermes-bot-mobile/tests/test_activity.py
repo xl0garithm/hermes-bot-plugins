@@ -124,6 +124,7 @@ class CarryOver(unittest.TestCase):
             self.assertEqual(sorted(store.carry_over(old, new)), ["devices.json", "settings.json", "vapid.json"])
             self.assertEqual(json.loads((new / "vapid.json").read_text()), {"private": "pem"})
             self.assertEqual(oct((new / "devices.json").stat().st_mode & 0o777), "0o600")
+            self.assertEqual(oct(new.stat().st_mode & 0o777), "0o700")
             self.assertTrue((old / "devices.json").exists())
 
             (old / "devices.json").write_text("[]")

@@ -66,6 +66,7 @@ def carry_over(old: Path, new: Path) -> list[str]:
 
     copied = []
     new.mkdir(parents=True, exist_ok=True)
+    os.chmod(new, 0o700)
 
     for name in CARRIED_FILES:
         source = old / name
