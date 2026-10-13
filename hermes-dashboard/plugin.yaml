@@ -1,0 +1,11 @@
+name: hermes-dashboard
+version: 0.1.0
+description: Panels each bot keeps for its person (what it found, things to follow up, reminders, a few numbers), shown in the HermesBot app; a skill teaches bots to build them from any data and keep them fresh.
+author: Logan Carlson
+kind: standalone
+provides_tools:
+  - dashboard_read
+  - dashboard_set_panel
+  - dashboard_update_items
+  - dashboard_remove_panel
+provides_hooks: []

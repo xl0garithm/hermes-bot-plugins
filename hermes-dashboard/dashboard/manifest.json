@@ -1,0 +1,12 @@
+{
+  "name": "hermes-dashboard",
+  "label": "Dashboards",
+  "description": "Panels each bot keeps for you (what it found, things to follow up, reminders, numbers), shown in the HermesBot app.",
+  "version": "0.1.0",
+  "tab": {
+    "path": "/hermes-dashboard",
+    "hidden": true
+  },
+  "entry": "dist/index.js",
+  "api": "plugin_api.py"
+}
