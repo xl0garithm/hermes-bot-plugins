@@ -9,6 +9,11 @@ and sends a small encrypted Web Push message (RFC 8291, VAPID) to each phone the
 distributor, for example [ntfy](https://ntfy.sh), delivers it; no Google or Apple account is involved. Nothing is pushed for
 the chat the phone has on screen, and no "finished" pushes while the app is in front. Command text is never put in a push.
 
+Tapping a push opens what it is about: the exact chat (`hermesbot://bot/<profile>?chat=<session id>`, the bot's main chat
+or a side chat, also when a subagent asked), the group room for a room member (`hermesbot://room/<room id>`, or the app's
+Needs you list when the room cannot be told), and the bot's routines for a routine. "Finished" is only pushed for the
+person's own chats: not for another bot's message to this one, a room member, a subagent or a routine's run.
+
 ## Live room activity
 
 Hermes runs a group-room member's turn on a hidden session, and the room log only says when it started and settled. Through

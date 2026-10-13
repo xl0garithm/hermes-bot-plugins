@@ -81,17 +81,35 @@ def notification_id(*parts: str) -> int:
     return zlib.crc32("\x1f".join(parts).encode()) & 0x7FFFFFFF
 
 
+#: The app's Needs you list: where a push lands when the chat it is about cannot be told.
+INBOX = "hermesbot://inbox"
+
+
+def link(profile: str, *, chat: str = "", room: str = "", page: str = "") -> str:
+    """Where tapping a push lands in the app: a group room, a page of the bot (`routines`), or the exact chat the push is
+    about (its persistent session id: the bot's main chat or a side chat). With none of those, the bot's usual chat."""
+    if room:
+        return f"hermesbot://room/{quote(room, safe='')}"
+
+    base = f"hermesbot://bot/{quote(profile, safe='')}"
+
+    if page:
+        return f"{base}/{page}"
+
+    return f"{base}?chat={quote(chat, safe='')}" if chat else base
+
+
 def build(kind: str, *, profile: str, bot: str, body: str, key: str, url: str | None = None) -> dict:
     """The payload the phone's push library renders by itself while the app is closed.
 
-    `url` opens the app on the bot (the notification is the first tap; Allow / Deny is the second).
+    `url` opens the app where the push is about (the notification is the first tap; Allow / Deny is the second).
     """
     return {
         "id": notification_id(kind, profile, key),
         "title": tidy(bot, 40) or "Hermes",
         "body": tidy(body),
         "type": CHANNELS[kind],
-        "url": url or f"hermesbot://bot/{quote(profile, safe='')}",
+        "url": url or link(profile),
     }
 
 

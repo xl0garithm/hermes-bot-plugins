@@ -23,12 +23,15 @@ class Setup(unittest.TestCase):
         self.store.upsert(self.phone.endpoint, self.phone.p256dh, self.phone.auth, "Fold")
         self.net = Recorder()
         self.now = [100.0]
+        # What Hermes's turn context says (see hooks.turn_context): nothing, unless a test sets it.
+        self.context = {"chat": "", "source": "", "room": ""}
         self.hooks = hooks.PushHooks(
             store=self.store,
             pusher=notify.Pusher(self.store, post=self.net, background=False),
             profile=lambda: self.profile,
             name=lambda profile: "Hydra",
             clock=lambda: self.now[0],
+            context=lambda: dict(self.context),
         )
 
     def tearDown(self):
@@ -104,6 +107,19 @@ class LongTurns(Setup):
         self.run_turn(20)
         self.assertEqual(self.net.calls, [])
 
+    def test_turns_that_are_not_the_persons_chat_stay_quiet(self):
+        # Another bot's message (a `hermes -p hydra chat` run), a room member, a subagent: none is a chat the person had.
+        for platform in ("cli", "bot_room", "subagent", "cron"):
+            with self.subTest(platform=platform):
+                self.run_turn(300, session=f"{platform}-1", platform=platform)
+
+        self.assertEqual(self.net.calls, [])
+
+    def test_a_room_member_known_only_by_its_context_stays_quiet_too(self):
+        self.context.update(source="bot_room", room="r-garden")
+        self.run_turn(300, session="20261012_212705_ab12cd")
+        self.assertEqual(self.net.calls, [])
+
     def test_a_turn_we_never_saw_start_is_ignored(self):
         self.hooks.on_turn_done(session_id="unknown", platform="tui")
         self.assertEqual(self.net.calls, [])
@@ -173,6 +189,55 @@ class Routines(Setup):
 
     def test_an_interrupted_routine_is_not_a_failure_to_report(self):
         self.hooks.on_session_end(session_id="r3", platform="cron", failed=False, interrupted=True)
+        self.assertEqual(self.net.calls, [])
+
+
+class WhereATapLands(Setup):
+    """The link in each push opens what it is about: the exact chat (main or side), the room, or the routines."""
+
+    side = "20261012_221530_9f3e1a"
+
+    def test_an_approval_opens_its_chat(self):
+        # In the dashboard an approval's session key is the chat's persistent id.
+        self.hooks.on_approval(command="rm x", description="delete", session_key=self.side, surface="gateway", pattern_key="rm")
+        self.assertEqual(self.sent()[0]["url"], f"hermesbot://bot/hydra?chat={self.side}")
+
+    def test_a_question_opens_its_chat(self):
+        self.hooks.on_tool(tool_name="clarify", args={"question": "Which?"}, tool_call_id="c1", session_id=self.side)
+        self.assertEqual(self.sent()[0]["url"], f"hermesbot://bot/hydra?chat={self.side}")
+
+    def test_a_finished_turn_opens_its_chat(self):
+        self.hooks.on_turn_start(session_id=self.side, platform="tui")
+        self.now[0] += 120
+        self.hooks.on_turn_done(session_id=self.side, platform="tui")
+        self.assertEqual(self.sent()[0]["url"], f"hermesbot://bot/hydra?chat={self.side}")
+
+    def test_a_subagent_asking_opens_the_chat_it_works_for(self):
+        # A subagent's own session is a child the app never lists; the turn's context names the person's chat.
+        self.context.update(chat=self.side, source="tui")
+        self.hooks.on_tool(tool_name="clarify", args={"question": "Which?"}, tool_call_id="c2", session_id="20261012_221601_000aaa")
+        self.assertEqual(self.sent()[0]["url"], f"hermesbot://bot/hydra?chat={self.side}")
+
+    def test_a_room_members_approval_opens_the_room(self):
+        self.context.update(chat="20261012_221700_77aa00", source="bot_room", room="r-garden")
+        self.hooks.on_approval(command="rm x", description="delete", session_key="20261012_221700_77aa00", surface="gateway", pattern_key="rm")
+        self.assertEqual(self.sent()[0]["url"], "hermesbot://room/r-garden")
+
+    def test_a_room_member_whose_room_cannot_be_told_opens_needs_you_not_its_hidden_session(self):
+        self.context.update(source="bot_room")
+        self.hooks.on_tool(tool_name="clarify", args={"question": "Which?"}, tool_call_id="c3", session_id="20261012_221700_77aa00")
+        self.assertEqual(self.sent()[0]["url"], "hermesbot://inbox")
+
+    def test_a_gateway_session_key_is_not_a_chat(self):
+        self.hooks.on_approval(command="rm x", description="delete", session_key="agent:main:telegram:dm:123", surface="gateway", pattern_key="rm")
+        self.assertEqual(self.sent()[0]["url"], "hermesbot://bot/hydra")
+
+    def test_a_routine_opens_the_bots_routines(self):
+        self.hooks.on_session_end(session_id="cron_0a1b2c3d4e5f_20261012_090000", platform="cron", failed=True)
+        self.assertEqual(self.sent()[0]["url"], "hermesbot://bot/hydra/routines")
+
+    def test_a_repeat_of_a_waiting_approval_is_not_pushed(self):
+        self.hooks.on_approval(command="rm x", description="delete", session_key=self.side, surface="gateway", pattern_key="rm2", coalesced=True)
         self.assertEqual(self.net.calls, [])
 
 

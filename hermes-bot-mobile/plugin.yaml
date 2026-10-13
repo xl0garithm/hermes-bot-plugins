@@ -1,5 +1,5 @@
 name: hermes-bot-mobile
-version: 0.1.0
+version: 0.1.1
 description: The HermesBot phone app's companion on this server - push notifications when a bot needs you, and live activity of bots in group rooms.
 author: Logan Carlson
 kind: standalone
