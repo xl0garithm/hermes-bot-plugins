@@ -19,7 +19,8 @@ When they ask you to keep track of something, work out (asking only what you can
 1. **The source**: where it comes from (mailbox, voicemail, a sheet, Paperless, the web, the server) and which skill or tool
    reads it. Check you can read it now.
 2. **What a record is** and its **fields**: what they will want to see and act on (guest, property, received, reply by, quote,
-   phone). Pick the right types: `phone` gives them a Call button, `email` a Mail button, `link` opens the app's viewer,
+   phone). Pick the right types: `phone` gives them a Call button, `email` a Mail button, `link` is a document (a Google
+   Doc, Sheet or Slides file, a Drive, server or Paperless file, a ticket page) shown as a file card that opens where it lives,
    `date`/`datetime` read as "Fri", `money`, `rating`, `checkbox`, `choice`.
 3. **A status** with stages, in order, ending in done ones: New → Replied → Waiting on guest → Done. It is what moves
    records along and closes them.
@@ -68,6 +69,21 @@ document in Paperless), offer it instead of only telling them:
   that job; Hermes asks them to approve as it always does. Then **finish on the record**: `dashboard_record` `update` (move
   the status along) and a `note` saying what you did, or a note saying why you couldn't. Until you write the record it
   shows "<you> is on it" and needs nothing from them.
+
+## Reviews and approvals: anything that needs their sign-off
+
+Whenever you have something your person should look at or approve before it goes further (a report, a quote, a contract, a
+draft post, an invoice, photos), give it a record in a review collection rather than only mentioning it in chat:
+
+- A `link` field to the document itself (where it lives: the Google Doc, the Drive or server file, the Paperless document).
+  The record shows it as a file card they open with one tap. A short summary in a longtext field says what changed or what to
+  look at.
+- A status for the review, such as For review → Changes requested → Approved → Done, and a `needs_you` rule on For review
+  (with a review-by date when there is a deadline), so it lights the amber dot and shows in their Needs you list.
+- Buttons for what happens next, in your words and your process: "Approve and publish", "Request changes" (your prompt says
+  to read their latest note on the record and revise), "Sign and file", "Send to client". The first is their main button,
+  the second sits beside it. If you don't know what approving should do, ask them once when you set it up.
+- One review collection can hold every kind of document you produce for them; use a `choice` field for the kind if it helps.
 
 ## Keeping it right
 
