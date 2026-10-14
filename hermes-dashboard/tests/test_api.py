@@ -48,7 +48,7 @@ class Api(unittest.TestCase):
             del sys.modules[key]
 
     def test_status_and_summary(self):
-        self.assertEqual(self.client.get(f"{self.base}/status").json()["version"], "0.2.2")
+        self.assertEqual(self.client.get(f"{self.base}/status").json()["version"], "0.2.3")
         self.assertEqual(self.client.get(f"{self.base}/bots").json()["bots"]["concierge"]["needs_you"], 1)
 
     def test_a_dashboard_computed(self):
@@ -76,6 +76,14 @@ class Api(unittest.TestCase):
         self.assertEqual(body["running"]["session"], "20261013_094100_ab12")
         self.assertEqual(self.client.post(url, json={}).status_code, 400)
         self.assertEqual(self.client.post(f"{self.base}/records/{self.record['id']}/actions/nope", json={}).status_code, 404)
+
+    def test_muting_a_record(self):
+        url = f"{self.base}/records/{self.record['id']}/mute"
+        until = int(__import__("time").time()) + 3600
+        self.assertEqual(self.client.post(url, json={"until": until}).json()["record"]["muted_until"], until)
+        self.assertEqual(self.client.get(f"{self.base}/bots").json()["bots"]["concierge"]["needs_you"], 0)
+        self.assertIsNone(self.client.post(url, json={"until": None}).json()["record"]["muted_until"])
+        self.assertEqual(self.client.post(url, json={"until": 5}).status_code, 400)
 
     def test_bad_requests(self):
         self.assertEqual(self.client.get(f"{self.base}/records/nope").status_code, 404)

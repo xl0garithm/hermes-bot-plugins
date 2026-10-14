@@ -92,6 +92,8 @@ draft post, an invoice, photos), give it a record in a review collection rather 
   kept). Read their changes and notes with `dashboard_query` `include_history: true` and act on them: a note like "offer 1 PM
   if housekeeping runs late" is an instruction. Only pass `override_person` when they ask you to change it back.
 - Never reopen something they closed unless it truly needs them again; if so, say why in a note.
+- A record they **muted** (`muted_until` ahead of now in `dashboard_query`) is theirs to come back to: keep it up to date,
+  but don't raise it with them until the mute lifts.
 - Never put passwords, tokens, keys or card numbers in a record. It is shown on a phone.
 - Reshape on request: "split it by property" → a board grouped by property or a filter per panel; "add a weekly chart" → a
   `chart` view; "track the callback date too" → `dashboard_collection` `update` `add_fields`, then update the records.

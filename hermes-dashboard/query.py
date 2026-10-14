@@ -547,6 +547,9 @@ def _row(record: dict, config: dict, fields: list[dict], now: float) -> dict:
     show = config.get("show") or {}
     row = {"id": record["id"], "done": bool(record.get("closed_at")), "needs_you": needs_you(record, config, fields, now)}
 
+    if muted(record, now):
+        row["muted_until"] = record["muted_until"]
+
     for slot in ("title", "subtitle", "meta"):
         typed = _typed(by_key, show.get(slot), record)
 
@@ -567,10 +570,22 @@ def running(record: dict, now: float) -> dict | None:
     return job if job and now - float(job.get("at") or 0) < RUNNING_S else None
 
 
+def muted(record: dict, now: float) -> bool:
+    """Whether the person muted this record and the time they picked has not come yet."""
+    until = record.get("muted_until")
+
+    return bool(until) and float(until) > now
+
+
 def needs_you(record: dict, config: dict, fields: list[dict], now: float) -> bool:
     rule = config.get("needs_you")
 
-    return bool(rule) and not record.get("closed_at") and not running(record, now) and matches(rule, record, fields, now)
+    return bool(rule) and not record.get("closed_at") and not running(record, now) and not muted(record, now) and matches(rule, record, fields, now)
+
+
+def _muted_last(records: list[dict], now: float) -> list[dict]:
+    """A muted record waits at the bottom of its panel; the order is otherwise kept."""
+    return [record for record in records if not muted(record, now)] + [record for record in records if muted(record, now)]
 
 
 def compute_view(view: dict, fields: list[dict] | None, records: list[dict], now: float) -> dict:
@@ -592,7 +607,7 @@ def compute_view(view: dict, fields: list[dict] | None, records: list[dict], now
 
     if kind in ("list", "checklist", "table"):
         shown = chosen if config.get("include_closed") else open_
-        shown = sort_records(shown, config.get("sort") or [], fields)[: config.get("limit", 50)]
+        shown = _muted_last(sort_records(shown, config.get("sort") or [], fields)[: config.get("limit", 50)], now)
 
         if kind == "checklist" and not config.get("include_closed"):
             # Its last few done items stay under the open ones, so a tick can be undone.
@@ -603,7 +618,7 @@ def compute_view(view: dict, fields: list[dict] | None, records: list[dict], now
             by_key = {field["key"]: field for field in fields}
             columns = config.get("columns", [])
             result["columns"] = [{"key": key, "label": by_key[key]["label"] if key in by_key else key.strip("_").capitalize(), "type": "datetime" if key in SPECIAL else by_key[key]["type"]} for key in columns]
-            result["rows"] = [{"id": record["id"], "done": bool(record.get("closed_at")), "needs_you": needs_you(record, config, fields, now), "cells": [_typed(by_key, key, record) for key in columns]} for record in shown]
+            result["rows"] = [{"id": record["id"], "done": bool(record.get("closed_at")), "needs_you": needs_you(record, config, fields, now), **({"muted_until": record["muted_until"]} if muted(record, now) else {}), "cells": [_typed(by_key, key, record) for key in columns]} for record in shown]
         else:
             result["rows"] = [_row(record, config, fields, now) for record in shown]
 
@@ -615,7 +630,7 @@ def compute_view(view: dict, fields: list[dict] | None, records: list[dict], now
         names = [stage["name"] for stage in group["stages"]] if group["type"] == "status" else list(group["options"])
         cutoff = now - config.get("closed_within_days", 7) * 86_400
         visible = [record for record in chosen if not record.get("closed_at") or record["closed_at"] >= cutoff]
-        ordered = sort_records(visible, config.get("sort") or [], fields)
+        ordered = _muted_last(sort_records(visible, config.get("sort") or [], fields), now)
         result["columns"] = [{"name": name, "rows": [_row(record, config, fields, now) for record in ordered if value_of(record, group["key"]) == name][: config.get("limit", 50)]} for name in names]
 
         for column in result["columns"]:

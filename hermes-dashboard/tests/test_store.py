@@ -326,11 +326,53 @@ class SchemaOne(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "dashboard.db"
             conn = sqlite3.connect(path)
-            conn.executescript(S.SCHEMA.replace(", actions TEXT NOT NULL DEFAULT '[]'", "").replace(", running TEXT", ""))
+            conn.executescript(S.SCHEMA.replace(", actions TEXT NOT NULL DEFAULT '[]'", "").replace(", running TEXT,\n  muted_until INTEGER", ""))
             conn.execute("INSERT INTO meta (key, value) VALUES ('schema', '1')")
             conn.commit()
             conn.close()
             store = S.Store(Path(folder))
             store.create_collection(CONCIERGE, {**GUEST_EMAILS, "actions": [{"label": "Send reply", "prompt": "Send it."}]})
             self.assertEqual(store.describe(CONCIERGE, "guest-emails")["actions"][0]["id"], "send-reply")
+            record = store.upsert(CONCIERGE, "guest-emails", [{"values": {"guest": "Dana"}}])[0]["record"]
+            self.assertIsNone(record["muted_until"])
+
+
+class Muting(Setup):
+    def setUp(self):
+        super().setUp()
+        self.store.set_view(CONCIERGE, {"id": "inbox", "title": "Guest emails", "kind": "list", "collection": "guest-emails", "config": {"show": {"title": "guest"}, "needs_you": {"field": "status", "op": "eq", "value": "New"}}})
+        self.first = self.add("m1")["record"]
+        self.second = self.add("m2", guest="Lee")["record"]
+
+    def rows(self):
+        return self.store.dashboard("concierge")["views"][0]["rows"]
+
+    def test_a_muted_record_waits_quietly_at_the_bottom(self):
+        self.assertEqual(self.store.summary()["concierge"]["needs_you"], 2)
+        self.store.mute(YOU, self.first["id"], self.now[0] + 3600)
+        self.assertEqual(self.store.summary()["concierge"]["needs_you"], 1)
+        rows = self.rows()
+        self.assertEqual([row["id"] for row in rows], [self.second["id"], self.first["id"]])
+        self.assertEqual((rows[1]["needs_you"], rows[1]["muted_until"]), (False, self.now[0] + 3600))
+        self.assertEqual([entry["row"]["id"] for entry in self.store.needs_you_records("concierge")], [self.second["id"]])
+        self.assertEqual(self.store.get_record(YOU, self.first["id"])["history"][0]["field"], "_muted")
+
+    def test_it_speaks_up_again_when_the_time_comes_or_when_unmuted(self):
+        self.store.mute(YOU, self.first["id"], self.now[0] + 3600)
+        self.now[0] += 3601
+        self.assertEqual(self.store.summary()["concierge"]["needs_you"], 2)
+        self.assertNotIn("muted_until", self.rows()[0])
+        self.store.mute(YOU, self.second["id"], S.MUTE_FOREVER + 10**9)
+        self.assertEqual(self.store.get_record(YOU, self.second["id"])["record"]["muted_until"], S.MUTE_FOREVER)
+        self.store.mute(YOU, self.second["id"], None)
+        self.assertEqual(self.store.summary()["concierge"]["needs_you"], 2)
+        self.assertEqual(self.store.get_record(YOU, self.second["id"])["history"][0]["new"], None)
+
+    def test_only_the_person_mutes_and_only_into_the_future(self):
+        with self.assertRaises(S.DashboardError):
+            self.store.mute(CONCIERGE, self.first["id"], self.now[0] + 60)
+        with self.assertRaises(S.DashboardError):
+            self.store.mute(YOU, self.first["id"], self.now[0] - 60)
+        with self.assertRaises(S.DashboardError):
+            self.store.mute(YOU, self.first["id"], "soon")
 

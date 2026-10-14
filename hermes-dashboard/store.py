@@ -29,7 +29,7 @@ except ImportError:  # the tests import the modules flat
     import fields as F  # type: ignore[no-redef]
     import query as Q  # type: ignore[no-redef]
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 MAX_COLLECTIONS = 50
 MAX_OPEN_RECORDS = 5000
 MAX_VIEWS = 30
@@ -37,6 +37,8 @@ MAX_BATCH = 100
 MAX_NOTE = 2000
 MAX_HISTORY = 100
 MAX_ACTIONS = 4
+# "Until I unmute": a mute far enough ahead that it never lifts by itself.
+MUTE_FOREVER = 32_503_680_000
 #: Closed records older than this are left out of views and numbers (they stay in the database).
 CLOSED_WINDOW_DAYS = 400
 
@@ -55,7 +57,8 @@ CREATE TABLE IF NOT EXISTS access (
 );
 CREATE TABLE IF NOT EXISTS records (
   id TEXT PRIMARY KEY, collection TEXT NOT NULL, source_key TEXT, vals TEXT NOT NULL, person_fields TEXT NOT NULL DEFAULT '{}',
-  created_by TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, closed_at INTEGER, running TEXT
+  created_by TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, closed_at INTEGER, running TEXT,
+  muted_until INTEGER
 );
 CREATE UNIQUE INDEX IF NOT EXISTS records_source ON records (collection, source_key) WHERE source_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS records_collection ON records (collection, closed_at);
@@ -72,8 +75,9 @@ CREATE TABLE IF NOT EXISTS views (
 
 
 def _migrate(conn) -> None:
-    """Schema 2 adds a collection's buttons (`actions`) and the button job a record waits on (`running`)."""
-    for table, column, kind in (("collections", "actions", "TEXT NOT NULL DEFAULT '[]'"), ("records", "running", "TEXT")):
+    """Schema 2 adds a collection's buttons (`actions`) and the button job a record waits on (`running`); schema 3 the time
+    a record the person muted speaks up again (`muted_until`)."""
+    for table, column, kind in (("collections", "actions", "TEXT NOT NULL DEFAULT '[]'"), ("records", "running", "TEXT"), ("records", "muted_until", "INTEGER")):
         if column not in {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
 
@@ -535,6 +539,7 @@ class Store:
             "updated_at": row["updated_at"],
             "closed_at": row["closed_at"],
             "running": json.loads(row["running"]) if row["running"] else None,
+            "muted_until": row["muted_until"],
         }
 
     def _log(self, conn, record_id: str, actor: Actor, field: str, old, new, at: int) -> None:
@@ -696,6 +701,33 @@ class Store:
             conn.execute("UPDATE records SET updated_at = ?, running = CASE WHEN ? THEN NULL ELSE running END WHERE id = ?", (now, actor.kind == "bot", record["id"]))
 
             return {"record": record["id"], "note": note, "at": now, "by": actor.name}
+
+    def mute(self, actor: Actor, record_id: str, until) -> dict:
+        """The person mutes a record until a time (epoch seconds; MUTE_FOREVER for "until I unmute") or unmutes it (None):
+        while muted it lights no amber dot, leaves Needs you and waits at the bottom of its panels."""
+        if actor.kind != "person":
+            raise DashboardError("a record is muted by the person")
+
+        now = self._now()
+
+        if until is not None:
+            try:
+                until = min(int(until), MUTE_FOREVER)
+            except (TypeError, ValueError):
+                raise DashboardError("until is a time in epoch seconds, or null to unmute") from None
+
+            if until <= now:
+                raise DashboardError("pick a time that is still ahead")
+
+        with self._db(write=True) as conn:
+            _, record = self._find_record(conn, actor, record_id, write=True)
+            was = record["muted_until"] if Q.muted(record, now) else None
+
+            if was != until:
+                conn.execute("UPDATE records SET muted_until = ? WHERE id = ?", (until, record["id"]))
+                self._log(conn, record["id"], actor, "_muted", was, until, now)
+
+            return {"record": {**record, "muted_until": until}}
 
     def start_action(self, actor: Actor, record_id: str, action_id: str, session: str | None = None) -> dict:
         """The person pressed one of a collection's buttons on a record: it is logged, the record waits on the bot (no

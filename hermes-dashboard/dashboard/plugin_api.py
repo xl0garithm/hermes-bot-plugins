@@ -105,6 +105,16 @@ async def note(record_id: str, body: Note) -> dict:
     return _guard(lambda S, store: store.add_note(S.Actor.person(), record_id, body.text))
 
 
+class Mute(BaseModel):
+    until: int | None = None
+
+
+@router.post("/records/{record_id}/mute")
+async def mute(record_id: str, body: Mute) -> dict:
+    """Mutes a record until `until` (epoch seconds), or unmutes it when `until` is null."""
+    return _guard(lambda S, store: store.mute(S.Actor.person(), record_id, body.until))
+
+
 class Press(BaseModel):
     session: str | None = None
 
