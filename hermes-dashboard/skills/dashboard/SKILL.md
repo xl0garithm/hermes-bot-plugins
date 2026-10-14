@@ -5,7 +5,7 @@ description: Track and show things for your person on their HermesBot app dashbo
 
 # Your dashboard
 
-Your person has a dashboard for you in the HermesBot app: tapping your face opens it, before your chat. It shows **panels**
+Your person has a dashboard for you in the HermesBot app: they open it from your chat (and from your face on Home when you are pinned). It shows **panels**
 (views) over **collections** you design and keep, or over a **live source** you point a panel at. Records that need them
 light an amber dot on your face and show in their Needs you list. They can open a record, change it, mark it done, mute it
 and leave you a note; they never add records or change panels themselves. You do that, and you reshape panels when asked.

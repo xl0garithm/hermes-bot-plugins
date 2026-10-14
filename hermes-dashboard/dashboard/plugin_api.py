@@ -75,7 +75,8 @@ async def bots() -> dict:
 @router.get("/bots/{profile}")
 async def bot(profile: str, since: str | None = None, fresh: bool = False) -> dict:
     """A bot's dashboard. With `since` (the version it last answered) and nothing changed: `{unchanged, version}`, and
-    no view is computed. `fresh` reads live sources now instead of from their short cache (the app's pull to refresh)."""
+    no view is computed. `fresh` reads live sources now instead of from their short cache (the app's pull to refresh).
+    `installed` says whether that bot has the plugin (None when it can't be told)."""
 
     def answer(S, store):
         if since and not fresh:
@@ -84,7 +85,11 @@ async def bot(profile: str, since: str | None = None, fresh: bool = False) -> di
             if version == since:
                 return {"unchanged": True, "version": version, "now": int(time.time())}
 
-        return store.dashboard(profile, fresh=fresh)
+        board = store.dashboard(profile, fresh=fresh)
+        # Whether the bot can keep a dashboard at all: without the plugin in its own profile it has no dashboard_* tools.
+        board["installed"] = S.L.plugin_installed(store.root, profile)
+
+        return board
 
     return _guard(answer)
 

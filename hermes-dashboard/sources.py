@@ -45,6 +45,31 @@ def bot_home(root: Path, profile: str) -> Path:
     return root if profile == "default" else root / "profiles" / profile
 
 
+def plugin_installed(root: Path, profile: str) -> bool | None:
+    """Whether this bot has the dashboard plugin (Hermes loads plugins per profile): its folder in the bot's plugins and the
+    bot's own `plugins.enabled` naming it. None for a bot that doesn't exist, or a config that can't be read."""
+    home = bot_home(root, profile)
+
+    if not home.is_dir():
+        return None
+
+    if not (home / "plugins" / "hermes-dashboard").is_dir():
+        return False
+
+    try:
+        import yaml
+
+        config = yaml.safe_load((home / "config.yaml").read_text(encoding="utf-8")) or {}
+    except FileNotFoundError:
+        return False
+    except Exception:
+        return None
+
+    enabled = (config.get("plugins") or {}).get("enabled") if isinstance(config, dict) else None
+
+    return isinstance(enabled, list) and "hermes-dashboard" in enabled
+
+
 def _inside(path: Path, folder: Path, what: str) -> Path:
     resolved = path.resolve()
 

@@ -18,7 +18,7 @@ SKILL_NAME = "dashboard"
 SKILL_DESCRIPTION = "Track things for your person in collections you design, shown as panels on their HermesBot app dashboard, kept fresh by routines."
 
 PROMPT_HINT = (
-    "Your person has a dashboard for you in the HermesBot app (it opens when they tap your face). Keep what you track for "
+    "Your person has a dashboard for you in the HermesBot app (they open it from your chat). Keep what you track for "
     "them there with the dashboard_* tools (find them with tool search if they are not listed), and keep every panel up to "
     "date by code, not by your model: a panel that reads a live source, a panel computed from a collection, or a script "
     "feed (write.py, no model); wake your model only when something needs judgment, never on a timer just to refresh a "

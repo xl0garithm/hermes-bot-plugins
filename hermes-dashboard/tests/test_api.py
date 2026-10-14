@@ -48,7 +48,7 @@ class Api(unittest.TestCase):
             del sys.modules[key]
 
     def test_status_and_summary(self):
-        self.assertEqual(self.client.get(f"{self.base}/status").json()["version"], "0.3.0")
+        self.assertEqual(self.client.get(f"{self.base}/status").json()["version"], "0.3.1")
         self.assertEqual(self.client.get(f"{self.base}/bots").json()["bots"]["concierge"]["needs_you"], 1)
 
     def test_a_dashboard_computed(self):
@@ -56,6 +56,9 @@ class Api(unittest.TestCase):
         self.assertEqual(body["views"][0]["rows"][0]["title"]["value"], "Dana")
         self.assertEqual(body["collections"]["concierge/guest-emails"]["fields"][0]["key"], "guest")
         self.assertEqual(self.client.get(f"{self.base}/bots/assistant").json()["views"], [])
+        # Whether the bot has the plugin is asked of its own profile; this test root has none, so it can't be told.
+        self.assertIn("installed", body)
+        self.assertIsNone(body["installed"])
 
     def test_the_persons_actions_on_a_record(self):
         url = f"{self.base}/records/{self.record['id']}"

@@ -53,6 +53,33 @@ class Root(unittest.TestCase):
         self.dir.cleanup()
 
 
+class Installed(Root):
+    """Whether a bot has the plugin in its own profile (Hermes loads plugins per profile)."""
+
+    def enable(self, home, names):
+        (home / "config.yaml").write_text("plugins:\n  enabled:\n" + "".join(f"    - {name}\n" for name in names))
+
+    def test_a_bot_with_the_plugin_folder_and_it_enabled(self):
+        (self.home / "plugins" / "hermes-dashboard").mkdir(parents=True)
+        self.enable(self.home, ["hermes-bot-mobile", "hermes-dashboard"])
+        self.assertIs(L.plugin_installed(self.root, "concierge"), True)
+
+    def test_a_folder_that_is_not_enabled_or_no_folder_is_not_installed(self):
+        self.enable(self.home, ["hermes-dashboard"])
+        self.assertIs(L.plugin_installed(self.root, "concierge"), False)
+        (self.home / "plugins" / "hermes-dashboard").mkdir(parents=True)
+        self.enable(self.home, ["hermes-bot-mobile"])
+        self.assertIs(L.plugin_installed(self.root, "concierge"), False)
+
+    def test_the_default_bot_lives_at_the_root(self):
+        (self.root / "plugins" / "hermes-dashboard").mkdir(parents=True)
+        self.enable(self.root, ["hermes-dashboard"])
+        self.assertIs(L.plugin_installed(self.root, "default"), True)
+
+    def test_a_bot_that_does_not_exist_cannot_be_told(self):
+        self.assertIsNone(L.plugin_installed(self.root, "nobody"))
+
+
 class LiveSources(Root):
     def test_a_sqlite_file_the_bot_keeps_is_a_live_table(self):
         db = sqlite3.connect(self.home / "ledger.db")
