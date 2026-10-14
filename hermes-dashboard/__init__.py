@@ -1,9 +1,9 @@
-"""hermes-dashboard: panels each bot keeps for its person, shown in the HermesBot app.
+"""hermes-dashboard: collections each bot designs and keeps for its person, shown as panels in the HermesBot app.
 
-A bot keeps its dashboard with four tools (`tools.py`): what it found, things to follow up, reminders, a few numbers, often
-refreshed by a routine. The phone reads the panels and marks items done through the dashboard routes
-(`dashboard/plugin_api.py`). They share one JSON file per bot under the Hermes root (`board.py`). The `dashboard` skill
-(`skills/dashboard/`) teaches a bot how to design a panel from whatever data its person picks and keep it fresh.
+A bot designs collections (its own typed fields), adds and updates records in them, and builds the views on its dashboard
+with four tools (`tools.py`); the person acts on records from the app through the dashboard routes
+(`dashboard/plugin_api.py`). Both share one SQLite database under the Hermes root (`store.py`). The `dashboard` skill
+(`skills/dashboard/`) teaches a bot to turn "keep track of X for me" into a collection and views, kept fresh by a routine.
 """
 
 from __future__ import annotations
@@ -15,13 +15,14 @@ log = logging.getLogger("hermes-dashboard")
 
 SKILL_MD = Path(__file__).resolve().parent / "skills" / "dashboard" / "SKILL.md"
 SKILL_NAME = "dashboard"
-SKILL_DESCRIPTION = "Keep panels on your person's phone dashboard (HermesBot app) and keep them fresh with a routine."
+SKILL_DESCRIPTION = "Track things for your person in collections you design, shown as panels on their HermesBot app dashboard, kept fresh by routines."
 
 PROMPT_HINT = (
     "Your person has a dashboard for you in the HermesBot app (it opens when they tap your face). When they ask you to track, "
-    "watch or collect something for them, keep it there as a panel with the dashboard_* tools (dashboard_read, "
-    "dashboard_set_panel, dashboard_update_items, dashboard_remove_panel; find them with tool search if they are not listed), "
-    "refreshed by a routine. First load the skill with skill_view(\"hermes-dashboard:dashboard\") for how."
+    "watch or collect something for them, keep it in a collection you design and show it as panels, with the dashboard_* "
+    "tools (dashboard_collection, dashboard_record, dashboard_query, dashboard_view; find them with tool search if they are "
+    "not listed). First load the skill with skill_view(\"hermes-dashboard:dashboard\") for how. A message starting "
+    "[Dashboard button \"…\"] is your person pressing a button on a record: do that job, then update the record."
 )
 
 

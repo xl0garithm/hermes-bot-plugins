@@ -1,8 +1,8 @@
-"""The phone's side of hermes-dashboard: read each bot's panels and mark items done.
+"""The phone's side of hermes-dashboard: each bot's dashboard computed, a record with its history, and the person's actions
+on a record (change fields, add a note, close or reopen). The person never creates records or views; bots do.
 
-Mounted by Hermes under `/api/plugins/hermes-dashboard/`, behind the dashboard's own sign-in, so only someone who can already
-use the server can reach it. Hermes imports this file on its own, apart from the plugin package, so it loads the package's
-`board` module by path and shares state with the bots' tools through its files.
+Mounted by Hermes under `/api/plugins/hermes-dashboard/`, behind the dashboard's own sign-in. Hermes imports this file on
+its own, apart from the plugin package, so it loads the package by path and shares the database with the bots' tools.
 """
 
 from __future__ import annotations
@@ -19,8 +19,7 @@ from pydantic import BaseModel
 _PACKAGE = "_hermes_dashboard_package"
 
 
-def _board_module():
-    """The plugin's `board` module, loaded once by path the way Hermes loads the package."""
+def _package():
     if _PACKAGE not in sys.modules:
         root = Path(__file__).resolve().parent.parent
         spec = importlib.util.spec_from_file_location(_PACKAGE, root / "__init__.py", submodule_search_locations=[str(root)])
@@ -30,7 +29,13 @@ def _board_module():
         sys.modules[_PACKAGE] = module
         spec.loader.exec_module(module)
 
-    return importlib.import_module(f"{_PACKAGE}.board")
+    return importlib.import_module(f"{_PACKAGE}.store"), importlib.import_module(f"{_PACKAGE}.tools")
+
+
+def _store():
+    S, T = _package()
+
+    return S, T.open_store()
 
 
 def _version() -> str:
@@ -43,46 +48,78 @@ def _version() -> str:
         return ""
 
 
+def _guard(call):
+    S, store = _store()
+
+    try:
+        return call(S, store)
+    except S.NotFound as error:
+        raise HTTPException(status_code=404, detail=str(error)) from None
+    except S.DashboardError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+
+
 router = APIRouter()
 
 
 @router.get("/status")
 async def status() -> dict:
-    board = _board_module()
-    return {"version": _version(), "bots": len(board.Board().summary())}
+    return _guard(lambda S, store: {"version": _version(), "schema": S.SCHEMA_VERSION, "bots": len(store.summary())})
 
 
 @router.get("/bots")
 async def bots() -> dict:
-    board = _board_module()
-    return {"bots": board.Board().summary(), "now": int(time.time())}
+    return _guard(lambda S, store: {"bots": store.summary(), "now": int(time.time())})
 
 
 @router.get("/bots/{profile}")
 async def bot(profile: str) -> dict:
-    board = _board_module()
-
-    try:
-        panels = board.Board().read(profile)
-    except board.DashboardError:
-        raise HTTPException(status_code=400, detail="not a bot's name") from None
-
-    return {"profile": profile, "panels": panels, "now": int(time.time())}
+    return _guard(lambda S, store: store.dashboard(profile))
 
 
-class Mark(BaseModel):
-    done: bool
+@router.get("/bots/{profile}/needs-you")
+async def bot_needs_you(profile: str) -> dict:
+    return _guard(lambda S, store: {"profile": profile, "records": store.needs_you_records(profile), "now": int(time.time())})
 
 
-@router.post("/bots/{profile}/panels/{panel_id}/items/{item_id}")
-async def mark(profile: str, panel_id: str, item_id: str, body: Mark) -> dict:
-    board = _board_module()
+@router.get("/records/{record_id}")
+async def record(record_id: str) -> dict:
+    return _guard(lambda S, store: {**store.get_record(S.Actor.person(), record_id), "now": int(time.time())})
 
-    try:
-        panel = board.Board().mark(profile, panel_id, item_id, body.done)
-    except board.DashboardError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from None
-    except KeyError:
-        raise HTTPException(status_code=404, detail="That item is no longer on the dashboard.") from None
 
-    return {"panel": panel}
+class Values(BaseModel):
+    values: dict
+
+
+@router.patch("/records/{record_id}")
+async def change(record_id: str, body: Values) -> dict:
+    return _guard(lambda S, store: store.update(S.Actor.person(), record_id, body.values))
+
+
+class Note(BaseModel):
+    text: str
+
+
+@router.post("/records/{record_id}/notes")
+async def note(record_id: str, body: Note) -> dict:
+    return _guard(lambda S, store: store.add_note(S.Actor.person(), record_id, body.text))
+
+
+class Press(BaseModel):
+    session: str | None = None
+
+
+@router.post("/records/{record_id}/actions/{action_id}")
+async def press(record_id: str, action_id: str, body: Press) -> dict:
+    """A button on a record: answers the message for the bot, which the app sends in the side chat `session`."""
+    return _guard(lambda S, store: store.start_action(S.Actor.person(), record_id, action_id, body.session))
+
+
+@router.post("/records/{record_id}/close")
+async def close(record_id: str) -> dict:
+    return _guard(lambda S, store: store.set_closed(S.Actor.person(), record_id, True))
+
+
+@router.post("/records/{record_id}/reopen")
+async def reopen(record_id: str) -> dict:
+    return _guard(lambda S, store: store.set_closed(S.Actor.person(), record_id, False))

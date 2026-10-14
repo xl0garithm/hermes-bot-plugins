@@ -8,56 +8,72 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-import board  # noqa: E402
+import store as S  # noqa: E402
 import tools  # noqa: E402
+
+FIELDS = [
+    {"key": "guest", "label": "Guest", "type": "text", "required": True},
+    {"key": "status", "type": "status", "stages": [{"name": "New"}, {"name": "Replied"}, {"name": "Done", "done": True}]},
+    {"key": "reply_by", "type": "date"},
+]
 
 
 class Tools(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
+        self.store = S.Store(Path(self.dir.name))
         self.who = ["concierge"]
-        self.tools = tools.DashboardTools(board=board.Board(Path(self.dir.name)), profile=lambda: self.who[0])
+        self.tools = tools.DashboardTools(store_factory=lambda: self.store, profile=lambda: self.who[0])
 
     def tearDown(self):
         self.dir.cleanup()
 
-    def call(self, handler, args=None):
-        return json.loads(handler(args or {}, task_id="t1"))
+    def call(self, handler, args):
+        return json.loads(handler(args, task_id="t1"))
 
-    def test_a_bot_builds_reads_and_changes_its_dashboard(self):
-        saved = self.call(self.tools.set_panel, {"title": "Voicemails", "kind": "list", "items": [{"id": "a", "title": "Guest in 303", "needs_you": True}, {"id": "b", "title": "Plow"}]})
-        self.assertEqual(saved["panel"]["id"], "voicemails")
-        self.assertIn("2 open items, 1 need the person", saved["message"])
+    def test_a_bot_sets_up_tracking_end_to_end(self):
+        created = self.call(self.tools.collection, {"action": "create", "id": "guest-emails", "title": "Guest emails", "fields": FIELDS})
+        self.assertIn("guest (text), status (status), reply_by (date)", created["message"])
 
-        updated = self.call(self.tools.update_items, {"panel_id": "voicemails", "upsert": [{"id": "c", "title": "Lake house inquiry"}], "remove": ["b"]})
-        self.assertEqual([item["id"] for item in updated["panel"]["items"]], ["a", "c"])
+        added = self.call(self.tools.record, {"action": "upsert", "collection": "guest-emails", "records": [{"source_key": "m1", "values": {"guest": "Dana", "reply_by": "2026-10-14"}}, {"source_key": "m2", "values": {"guest": "Lee"}}]})
+        self.assertEqual(added["message"], "2 added, 0 updated.")
 
-        read = self.call(self.tools.read)
-        self.assertEqual(len(read["panels"]), 1)
+        view = self.call(self.tools.view, {"action": "set", "id": "inbox", "title": "Guest emails", "kind": "list", "collection": "guest-emails", "config": {"show": {"title": "guest", "meta": "reply_by"}, "needs_you": {"field": "status", "op": "eq", "value": "New"}}})
+        self.assertIn("list panel 'Guest emails'", view["message"])
 
-        self.assertTrue(self.call(self.tools.remove_panel, {"panel_id": "voicemails"})["removed"])
-        self.assertEqual(self.call(self.tools.read)["message"], "No panels yet.")
+        answer = self.call(self.tools.query, {"collection": "guest-emails", "filter": {"op": "is_open"}, "aggregate": {"op": "count"}})
+        self.assertEqual(answer["aggregate"], 2)
 
-    def test_each_bot_has_its_own_dashboard(self):
-        self.call(self.tools.set_panel, {"title": "Voicemails", "kind": "list", "items": []})
+        record_id = added["results"][0]["id"]
+        self.assertEqual(self.call(self.tools.record, {"action": "close", "record_id": record_id})["message"], "Closed.")
+        self.assertEqual(self.store.summary()["concierge"]["needs_you"], 1)
+
+    def test_the_persons_change_is_reported_as_kept(self):
+        self.call(self.tools.collection, {"action": "create", "id": "guest-emails", "title": "Guest emails", "fields": FIELDS})
+        added = self.call(self.tools.record, {"action": "upsert", "collection": "guest-emails", "records": [{"source_key": "m1", "values": {"guest": "Dana"}}]})
+        self.store.update(S.Actor.person(), added["results"][0]["id"], {"status": "Replied"})
+        again = self.call(self.tools.record, {"action": "upsert", "collection": "guest-emails", "records": [{"source_key": "m1", "values": {"status": "New"}}]})
+        self.assertIn("Kept your person's changes to status", again["message"])
+
+    def test_mistakes_come_back_as_errors_to_fix(self):
+        self.assertIn("needs fields", self.call(self.tools.collection, {"action": "create", "title": "Empty"})["error"])
+        self.assertIn("no collection 'nope'", self.call(self.tools.record, {"action": "upsert", "collection": "nope", "records": [{"values": {}}]})["error"])
+        self.assertIn("action must be", self.call(self.tools.view, {"action": "draw"})["error"])
+
+    def test_each_bot_works_in_its_own_collections(self):
+        self.call(self.tools.collection, {"action": "create", "id": "guest-emails", "title": "Guest emails", "fields": FIELDS})
         self.who[0] = "assistant"
-        self.assertEqual(self.call(self.tools.read)["panels"], [])
-
-    def test_mistakes_come_back_as_errors_the_bot_can_fix(self):
-        self.assertIn("kind must be one of", self.call(self.tools.set_panel, {"title": "X", "kind": "chart"})["error"])
-        self.assertIn("no panel", self.call(self.tools.update_items, {"panel_id": "nope", "upsert": [{"title": "A"}]})["error"])
-        self.assertIn("tel:, sms:, mailto: or https://", self.call(self.tools.set_panel, {"title": "X", "kind": "list", "items": [{"title": "A", "action": {"label": "Go", "url": "file:///etc/passwd"}}]})["error"])
+        self.assertIn("error", self.call(self.tools.query, {"collection": "guest-emails"}))
 
     def test_the_schemas_name_the_tools_the_manifest_declares(self):
         manifest = (ROOT / "plugin.yaml").read_text()
+
         for name, schema, _handler in self.tools.registrations():
             self.assertEqual(schema["name"], name)
             self.assertIn(f"- {name}", manifest)
 
 
 class LoadedLikeHermes(unittest.TestCase):
-    """Hermes loads the folder as a package under another name; registration must work there."""
-
     def test_register_adds_the_tools_the_skill_and_the_hint(self):
         name = "hermes_plugins_hermes_dashboard_test"
         spec = importlib.util.spec_from_file_location(name, ROOT / "__init__.py", submodule_search_locations=[str(ROOT)])
@@ -81,7 +97,7 @@ class LoadedLikeHermes(unittest.TestCase):
                     seen["sections"].append(name)
 
             module.register(Context())
-            self.assertEqual([tool for tool, _ in seen["tools"]], ["dashboard_read", "dashboard_set_panel", "dashboard_update_items", "dashboard_remove_panel"])
+            self.assertEqual([tool for tool, _ in seen["tools"]], ["dashboard_collection", "dashboard_record", "dashboard_query", "dashboard_view"])
             self.assertEqual({toolset for _, toolset in seen["tools"]}, {"dashboard"})
             self.assertEqual(seen["skills"], [("dashboard", True)])
             self.assertEqual(seen["sections"], ["hermes-dashboard.hint"])
