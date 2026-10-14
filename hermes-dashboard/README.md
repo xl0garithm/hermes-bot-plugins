@@ -14,6 +14,16 @@ panels yourself: the bot does, and reshapes them when you ask.
   - `dashboard_record`: upsert by `source_key` (batches of 100), update, close, reopen, note, get.
   - `dashboard_query`: filter, sort, count/sum/avg, group, with history.
   - `dashboard_view`: set, remove, list, reorder panels on its own dashboard.
+- **Live by code, the model only for judgment.** Panels stay fresh without model calls wherever possible:
+  - **live panels** read a source when someone looks (a sqlite file in the bot's folder, a JSON URL, a calendar, or a
+    script that prints JSON), cached briefly, with no records and no job;
+  - **computed panels** (number, chart, table, list, board) work out figures from records on read;
+  - **script feeds**: a Hermes `no_agent` cron job runs the bot's script, which writes records with `write.py` (below);
+  - **change-gated jobs**: a Hermes `monitor` script (`write.py pending`) wakes the bot's model only when something new
+    is waiting; a record still waiting is retried once per `--retry-after` window.
+  Each panel says how it is kept, and the tools hint when a bot rewrites the same values or a summary panel too often.
+- **`write.py`**: the stdlib command a bot's scripts use (`upsert`, `update`, `close`, `reopen`, `note`, `query`,
+  `pending`). It always acts as the profile the job runs as (`HERMES_HOME`); nothing can name another bot.
 - **The `hermes-dashboard:dashboard` skill**: turning "keep track of X for me" into a collection and panels, kept fresh by a
   routine that delivers nowhere but the collection; respecting your edits and notes.
 - **A short prompt line** so bots know the dashboard is there.
@@ -23,7 +33,7 @@ panels yourself: the bot does, and reshapes them when you ask.
 | --- | --- |
 | `GET /status` | version, schema, how many dashboards |
 | `GET /bots` | per dashboard: open records that need you (each once), views, last change |
-| `GET /bots/{profile}` | that dashboard's views, computed, and their collections' fields |
+| `GET /bots/{profile}` | that dashboard's views, computed, their collections' fields, how each is kept, and a version; `?since=<version>` answers `unchanged` without computing; `?fresh=1` reads live sources now |
 | `GET /bots/{profile}/needs-you` | the records on it that need you |
 | `GET /records/{id}` | a record, its collection, its history and notes, how to head it, its buttons and any job under way |
 | `PATCH /records/{id}` | `{"values": {...}}` changed by you |

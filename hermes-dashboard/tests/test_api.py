@@ -48,7 +48,7 @@ class Api(unittest.TestCase):
             del sys.modules[key]
 
     def test_status_and_summary(self):
-        self.assertEqual(self.client.get(f"{self.base}/status").json()["version"], "0.2.3")
+        self.assertEqual(self.client.get(f"{self.base}/status").json()["version"], "0.3.0")
         self.assertEqual(self.client.get(f"{self.base}/bots").json()["bots"]["concierge"]["needs_you"], 1)
 
     def test_a_dashboard_computed(self):
@@ -84,6 +84,15 @@ class Api(unittest.TestCase):
         self.assertEqual(self.client.get(f"{self.base}/bots").json()["bots"]["concierge"]["needs_you"], 0)
         self.assertIsNone(self.client.post(url, json={"until": None}).json()["record"]["muted_until"])
         self.assertEqual(self.client.post(url, json={"until": 5}).status_code, 400)
+
+    def test_unchanged_since_the_last_read(self):
+        board = self.client.get(f"{self.base}/bots/concierge").json()
+        same = self.client.get(f"{self.base}/bots/concierge", params={"since": board["version"]}).json()
+        self.assertEqual((same["unchanged"], same["version"]), (True, board["version"]))
+        self.client.patch(f"{self.base}/records/{self.record['id']}", json={"values": {"status": "Replied"}})
+        changed = self.client.get(f"{self.base}/bots/concierge", params={"since": board["version"]}).json()
+        self.assertNotIn("unchanged", changed)
+        self.assertIn("views", changed)
 
     def test_bad_requests(self):
         self.assertEqual(self.client.get(f"{self.base}/records/nope").status_code, 404)

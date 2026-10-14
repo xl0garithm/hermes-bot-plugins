@@ -101,6 +101,7 @@ COLLECTION_SCHEMA = {
             "change_fields": {"type": "array", "items": {"type": "object"}, "description": "{key, label?, stages?, options?, required?}; a type never changes."},
             "retire_fields": {"type": "array", "items": {"type": "string"}},
             "actions": {"type": "array", "items": ACTION_SCHEMA, "description": "create/update: the buttons (up to 4); update replaces the whole list."},
+            "feed": {"type": "object", "description": "create/update: how this collection is kept fresh, shown to your person: {how: script (a no_agent cron job using write.py) | model_on_change (an agent job gated by a monitor_script) | model_timer (last resort), job: the cron job id, every: e.g. 5m}."},
             "profile": {"type": "string", "description": "share/unshare: the other bot's profile name."},
             "can_write": {"type": "boolean", "description": "share: whether that bot may add and change records."},
         },
@@ -152,7 +153,12 @@ VIEW_SCHEMA = {
         "a status or choice field, show, filter?, needs_you?, closed_within_days?}; table {columns: [keys], filter?, sort?}; "
         "number {aggregate: {op, field?}, filter?, period?: {field, unit: day|week|month, compare}}; chart {aggregate, field: "
         "a date field, bucket: day|week|month, count, style: bar|line, filter?}; summary {text}; stat {metrics: [{label, "
-        "value, change}]}. needs_you is a filter: matching open records light the amber dot. " + FILTER_DESCRIPTION
+        "value, change}]}. needs_you is a filter: matching open records light the amber dot. show.link names a url field a "
+        "row opens. LIVE PANELS: instead of collection, give source {kind: sqlite (path in your Hermes folder, query: one "
+        "SELECT) | json (url, rows: path to the list) | ics (url or path, days) | script (a file in your scripts/ folder "
+        "that prints JSON), ttl: seconds (default 60), fields: {key: type} to override inferred types}; list, table, "
+        "number and chart panels then read it when your person looks, with no routine and no model. Prefer that for data "
+        "that already exists. " + FILTER_DESCRIPTION
     ),
     "parameters": {
         "type": "object",
@@ -162,6 +168,7 @@ VIEW_SCHEMA = {
             "title": {"type": "string"},
             "kind": {"type": "string", "enum": ["list", "checklist", "board", "table", "number", "chart", "summary", "stat"]},
             "collection": {"type": "string"},
+            "source": {"type": "object", "description": "A live source instead of a collection (see above)."},
             "config": {"type": "object"},
             "position": {"type": "integer"},
             "ids": {"type": "array", "items": {"type": "string"}, "description": "reorder: view ids in the order to show them."},
@@ -172,13 +179,16 @@ VIEW_SCHEMA = {
 
 
 class DashboardTools:
-    def __init__(self, store_factory=None, profile=current_profile):
+    """The four tools. The acting bot is always the profile whose turn is running (`current_profile()`); there is no way
+    to name another one, so a script can't write as a different bot (scripts use write.py, which acts as the profile its
+    job runs as)."""
+
+    def __init__(self, store_factory=None):
         self._store_factory = store_factory or open_store
-        self._profile = profile
 
     def _call(self, handler):
         try:
-            return _result(handler(self._store_factory(), S.Actor.bot(self._profile())))
+            return _result(handler(self._store_factory(), S.Actor.bot(current_profile())))
         except (S.DashboardError, S.NotFound) as error:
             return _error(str(error))
         except Exception as error:
@@ -236,7 +246,11 @@ class DashboardTools:
                 results = store.upsert(actor, args.get("collection"), args.get("records") or [], override_person=bool(args.get("override_person")))
                 created = sum(1 for result in results if result["created"])
                 kept = sorted({key for result in results for key in result["kept"]})
-                message = f"{created} added, {len(results) - created} updated."
+                changed = sum(1 for result in results if result["changed"] and not result["created"])
+                message = f"{created} added, {changed} updated, {len(results) - created - changed} unchanged."
+
+                if results and not created and not changed:
+                    message += " Nothing changed: a run that finds nothing new should write nothing. If this keeps a panel fresh on a timer, a script feed (write.py, no model) or a computed or live panel does it without a model run; see the skill's 'Keeping a panel live'."
 
                 if kept:
                     message += f" Kept your person's changes to {', '.join(kept)} (read them with dashboard_query include_history)."
@@ -279,7 +293,15 @@ class DashboardTools:
         def run(store, actor):
             if action == "set":
                 view = store.set_view(actor, args)
-                return {"view": view, "message": f"Saved the {view['kind']} panel '{view['title']}'. Your person sees it on your dashboard in the HermesBot app."}
+                message = f"Saved the {view['kind']} panel '{view['title']}'. Your person sees it on your dashboard in the HermesBot app."
+
+                if view.get("preview") is not None:
+                    message += f" It reads its source live (every {view['config']['source']['ttl']} s at most, only while your person looks); no routine needed. First rows: {json.dumps(view['preview'], ensure_ascii=False, default=str)[:600]}"
+
+                if view["kind"] in ("summary", "stat") and view.get("rewrites_last_hour", 0) > S.REWRITES_PER_HOUR:
+                    message += f" You rewrote this panel {view['rewrites_last_hour']} times in the last hour. If it shows figures, compute them from a collection (number or chart panels) or bind a panel to a live source instead of rewriting it."
+
+                return {"view": view, "message": message}
 
             if action == "remove":
                 removed = store.remove_view(actor, args.get("id"))

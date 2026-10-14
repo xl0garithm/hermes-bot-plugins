@@ -18,11 +18,12 @@ SKILL_NAME = "dashboard"
 SKILL_DESCRIPTION = "Track things for your person in collections you design, shown as panels on their HermesBot app dashboard, kept fresh by routines."
 
 PROMPT_HINT = (
-    "Your person has a dashboard for you in the HermesBot app (it opens when they tap your face). When they ask you to track, "
-    "watch or collect something for them, keep it in a collection you design and show it as panels, with the dashboard_* "
-    "tools (dashboard_collection, dashboard_record, dashboard_query, dashboard_view; find them with tool search if they are "
-    "not listed). First load the skill with skill_view(\"hermes-dashboard:dashboard\") for how. A message starting "
-    "[Dashboard button \"…\"] is your person pressing a button on a record: do that job, then update the record."
+    "Your person has a dashboard for you in the HermesBot app (it opens when they tap your face). Keep what you track for "
+    "them there with the dashboard_* tools (find them with tool search if they are not listed), and keep every panel up to "
+    "date by code, not by your model: a panel that reads a live source, a panel computed from a collection, or a script "
+    "feed (write.py, no model); wake your model only when something needs judgment, never on a timer just to refresh a "
+    "panel. Load skill_view(\"hermes-dashboard:dashboard\") before building or changing anything there. A message "
+    "starting [Dashboard button \"…\"] is your person pressing a button on a record: do that job, then update the record."
 )
 
 

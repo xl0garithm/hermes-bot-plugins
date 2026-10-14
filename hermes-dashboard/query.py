@@ -479,7 +479,7 @@ def clean_view_config(kind: str, raw, fields: list[dict] | None) -> dict:
         if not isinstance(show, dict) or not show.get("title"):
             raise QueryError("show needs at least a title field: {title, subtitle, meta}")
 
-        config["show"] = {slot: _key(show[slot], fields, f"show.{slot}") for slot in ("title", "subtitle", "meta") if show.get(slot)}
+        config["show"] = {slot: _key(show[slot], fields, f"show.{slot}") for slot in ("title", "subtitle", "meta", "link") if show.get(slot)}
 
     if kind == "board":
         group = _key(raw.get("group_by"), fields, "group_by", ("status", "choice"))
@@ -550,7 +550,7 @@ def _row(record: dict, config: dict, fields: list[dict], now: float) -> dict:
     if muted(record, now):
         row["muted_until"] = record["muted_until"]
 
-    for slot in ("title", "subtitle", "meta"):
+    for slot in ("title", "subtitle", "meta", "link"):
         typed = _typed(by_key, show.get(slot), record)
 
         if typed:

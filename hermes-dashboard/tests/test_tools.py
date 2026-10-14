@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -23,7 +24,11 @@ class Tools(unittest.TestCase):
         self.dir = tempfile.TemporaryDirectory()
         self.store = S.Store(Path(self.dir.name))
         self.who = ["concierge"]
-        self.tools = tools.DashboardTools(store_factory=lambda: self.store, profile=lambda: self.who[0])
+        # The acting bot comes only from the running turn; the tests stand in for the turn.
+        patch = mock.patch.object(tools, "current_profile", lambda: self.who[0])
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.tools = tools.DashboardTools(store_factory=lambda: self.store)
 
     def tearDown(self):
         self.dir.cleanup()
@@ -36,7 +41,7 @@ class Tools(unittest.TestCase):
         self.assertIn("guest (text), status (status), reply_by (date)", created["message"])
 
         added = self.call(self.tools.record, {"action": "upsert", "collection": "guest-emails", "records": [{"source_key": "m1", "values": {"guest": "Dana", "reply_by": "2026-10-14"}}, {"source_key": "m2", "values": {"guest": "Lee"}}]})
-        self.assertEqual(added["message"], "2 added, 0 updated.")
+        self.assertEqual(added["message"], "2 added, 0 updated, 0 unchanged.")
 
         view = self.call(self.tools.view, {"action": "set", "id": "inbox", "title": "Guest emails", "kind": "list", "collection": "guest-emails", "config": {"show": {"title": "guest", "meta": "reply_by"}, "needs_you": {"field": "status", "op": "eq", "value": "New"}}})
         self.assertIn("list panel 'Guest emails'", view["message"])

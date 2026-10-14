@@ -73,8 +73,20 @@ async def bots() -> dict:
 
 
 @router.get("/bots/{profile}")
-async def bot(profile: str) -> dict:
-    return _guard(lambda S, store: store.dashboard(profile))
+async def bot(profile: str, since: str | None = None, fresh: bool = False) -> dict:
+    """A bot's dashboard. With `since` (the version it last answered) and nothing changed: `{unchanged, version}`, and
+    no view is computed. `fresh` reads live sources now instead of from their short cache (the app's pull to refresh)."""
+
+    def answer(S, store):
+        if since and not fresh:
+            version = store.version(profile)
+
+            if version == since:
+                return {"unchanged": True, "version": version, "now": int(time.time())}
+
+        return store.dashboard(profile, fresh=fresh)
+
+    return _guard(answer)
 
 
 @router.get("/bots/{profile}/needs-you")

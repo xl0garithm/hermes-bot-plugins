@@ -25,11 +25,13 @@ from pathlib import Path
 try:
     from . import fields as F
     from . import query as Q
-except ImportError:  # the tests import the modules flat
+    from . import sources as L
+except ImportError:  # the tests and the writer import the modules flat
     import fields as F  # type: ignore[no-redef]
     import query as Q  # type: ignore[no-redef]
+    import sources as L  # type: ignore[no-redef]
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 MAX_COLLECTIONS = 50
 MAX_OPEN_RECORDS = 5000
 MAX_VIEWS = 30
@@ -37,6 +39,9 @@ MAX_BATCH = 100
 MAX_NOTE = 2000
 MAX_HISTORY = 100
 MAX_ACTIONS = 4
+# A summary or stat panel rewritten more often than this in an hour gets a hint to compute it instead.
+REWRITES_PER_HOUR = 4
+FEED_HOWS = ("script", "model_on_change", "model_timer")
 # "Until I unmute": a mute far enough ahead that it never lifts by itself.
 MUTE_FOREVER = 32_503_680_000
 #: Closed records older than this are left out of views and numbers (they stay in the database).
@@ -50,7 +55,8 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS collections (
   key TEXT PRIMARY KEY, owner TEXT NOT NULL, id TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
-  fields TEXT NOT NULL, actions TEXT NOT NULL DEFAULT '[]', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, retired_at INTEGER
+  fields TEXT NOT NULL, actions TEXT NOT NULL DEFAULT '[]', feed TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+  retired_at INTEGER
 );
 CREATE TABLE IF NOT EXISTS access (
   collection TEXT NOT NULL, profile TEXT NOT NULL, can_write INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (collection, profile)
@@ -60,6 +66,8 @@ CREATE TABLE IF NOT EXISTS records (
   created_by TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, closed_at INTEGER, running TEXT,
   muted_until INTEGER
 );
+CREATE TABLE IF NOT EXISTS view_log (view TEXT NOT NULL, at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS view_log_view ON view_log (view, at);
 CREATE UNIQUE INDEX IF NOT EXISTS records_source ON records (collection, source_key) WHERE source_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS records_collection ON records (collection, closed_at);
 CREATE TABLE IF NOT EXISTS changes (
@@ -76,8 +84,8 @@ CREATE TABLE IF NOT EXISTS views (
 
 def _migrate(conn) -> None:
     """Schema 2 adds a collection's buttons (`actions`) and the button job a record waits on (`running`); schema 3 the time
-    a record the person muted speaks up again (`muted_until`)."""
-    for table, column, kind in (("collections", "actions", "TEXT NOT NULL DEFAULT '[]'"), ("records", "running", "TEXT"), ("records", "muted_until", "INTEGER")):
+    a record the person muted speaks up again (`muted_until`); schema 4 how a collection is kept fresh (`feed`)."""
+    for table, column, kind in (("collections", "actions", "TEXT NOT NULL DEFAULT '[]'"), ("records", "running", "TEXT"), ("records", "muted_until", "INTEGER"), ("collections", "feed", "TEXT")):
         if column not in {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
 
@@ -94,6 +102,8 @@ class NotFound(LookupError):
 class Actor:
     kind: str  # "bot" or "person"
     name: str  # the bot's profile, or "you"
+    # How a bot writes: "tool" (its model, through the dashboard_* tools) or "script" (code, through write.py).
+    via: str = "tool"
 
     @staticmethod
     def bot(profile: str) -> "Actor":
@@ -101,6 +111,11 @@ class Actor:
             raise DashboardError("not a bot's name")
 
         return Actor("bot", profile)
+
+    @staticmethod
+    def script(profile: str) -> "Actor":
+        """A bot's script (a no_agent job or a monitor), writing through write.py: a bot in every check."""
+        return Actor("bot", Actor.bot(profile).name, "script")
 
     @staticmethod
     def person() -> "Actor":
@@ -144,6 +159,29 @@ def _text(value, what: str, limit: int, *, required: bool = False, single_line: 
         raise DashboardError(str(error)) from None
 
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def _clean_feed(raw) -> dict | None:
+    """How a collection is kept fresh: `{how: script|model_on_change|model_timer, job?, every?}` (the cron job and its
+    interval, for the person to see; the plugin doesn't run it)."""
+    if raw in (None, "", {}):
+        return None
+
+    if not isinstance(raw, dict):
+        raise DashboardError("feed is {how: script|model_on_change|model_timer, job, every}")
+
+    how = str(raw.get("how") or "").strip().lower()
+
+    if how not in FEED_HOWS:
+        raise DashboardError(f"feed.how must be one of {', '.join(FEED_HOWS)}")
+
+    feed = {"how": how}
+
+    for key, limit in (("job", 64), ("every", 40), ("note", 120)):
+        if raw.get(key):
+            feed[key] = _text(raw[key], f"feed.{key}", limit)
+
+    return feed
 
 
 SESSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
@@ -271,6 +309,11 @@ class Store:
         return self._folder or default_dir()
 
     @property
+    def root(self) -> Path:
+        """The Hermes root the database lives under (its folder's parent)."""
+        return self.folder.parent
+
+    @property
     def path(self) -> Path:
         return self.folder / "dashboard.db"
 
@@ -331,6 +374,7 @@ class Store:
             "description": row["description"],
             "fields": json.loads(row["fields"]),
             "actions": json.loads(row["actions"] or "[]"),
+            "feed": json.loads(row["feed"]) if row["feed"] else None,
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
             "retired": bool(row["retired_at"]),
@@ -385,6 +429,7 @@ class Store:
             raise DashboardError(str(error)) from None
 
         actions = _clean_actions(raw.get("actions"), fields)
+        feed = _clean_feed(raw.get("feed"))
         now = self._now()
 
         with self._db(write=True) as conn:
@@ -399,8 +444,8 @@ class Store:
                 raise DashboardError(f"collection {cid!r} exists; change it with action update")
 
             conn.execute(
-                "INSERT INTO collections (key, owner, id, title, description, fields, actions, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (key, actor.name, cid, title, _text(raw.get("description"), "description", 300), _dump(fields), _dump(actions), now, now),
+                "INSERT INTO collections (key, owner, id, title, description, fields, actions, feed, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (key, actor.name, cid, title, _text(raw.get("description"), "description", 300), _dump(fields), _dump(actions), _dump(feed) if feed else None, now, now),
             )
 
             return self._collection(conn.execute("SELECT * FROM collections WHERE key = ?", (key,)).fetchone())
@@ -450,7 +495,8 @@ class Store:
             description = _text(raw["description"], "description", 300) if "description" in raw else collection["description"]
             # Buttons are replaced as a whole list when given, and checked against the fields as they are now.
             actions = _clean_actions(raw["actions"], cleaned) if "actions" in raw else _clean_actions(collection["actions"], cleaned)
-            conn.execute("UPDATE collections SET title = ?, description = ?, fields = ?, actions = ?, updated_at = ? WHERE key = ?", (title, description, _dump(cleaned), _dump(actions), self._now(), collection["key"]))
+            feed = _clean_feed(raw["feed"]) if "feed" in raw else collection.get("feed")
+            conn.execute("UPDATE collections SET title = ?, description = ?, fields = ?, actions = ?, feed = ?, updated_at = ? WHERE key = ?", (title, description, _dump(cleaned), _dump(actions), _dump(feed) if feed else None, self._now(), collection["key"]))
 
             return self._collection(conn.execute("SELECT * FROM collections WHERE key = ?", (collection["key"],)).fetchone())
 
@@ -521,8 +567,10 @@ class Store:
             collection = self._find_collection(conn, actor, ref)
             counts = conn.execute("SELECT COUNT(*), SUM(closed_at IS NULL) FROM records WHERE collection = ?", (collection["key"],)).fetchone()
             shared = [dict(entry) for entry in conn.execute("SELECT profile, can_write FROM access WHERE collection = ?", (collection["key"],))]
+            # Writes in the last 7 days by how they were made: the bot's model (tool), its scripts, or the person.
+            writes = {row[0]: row[1] for row in conn.execute("SELECT c.by_kind, COUNT(*) FROM changes c JOIN records r ON r.id = c.record WHERE r.collection = ? AND c.at >= ? GROUP BY 1", (collection["key"], self._now() - 7 * 86_400))}
 
-            return {**collection, "records": counts[0] or 0, "open": counts[1] or 0, "shared_with": shared}
+            return {**collection, "records": counts[0] or 0, "open": counts[1] or 0, "shared_with": shared, "writes_7d": {"model": writes.get("bot", 0), "script": writes.get("script", 0), "person": writes.get("person", 0)}}
 
     # -- records ----------------------------------------------------------------------------------------------
 
@@ -545,7 +593,7 @@ class Store:
     def _log(self, conn, record_id: str, actor: Actor, field: str, old, new, at: int) -> None:
         conn.execute(
             "INSERT INTO changes (record, at, by_kind, by_name, field, old, new) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (record_id, at, actor.kind, actor.name, field, None if old is None else _dump(old), None if new is None else _dump(new)),
+            (record_id, at, "script" if actor.via == "script" else actor.kind, actor.name, field, None if old is None else _dump(old), None if new is None else _dump(new)),
         )
 
     def _apply(self, conn, collection: dict, record: dict, values: dict, actor: Actor, override_person: bool) -> tuple[dict, list[str], list[str]]:
@@ -582,8 +630,9 @@ class Store:
         if changed or closed_at != record["closed_at"]:
             conn.execute("UPDATE records SET vals = ?, person_fields = ?, updated_at = ?, closed_at = ? WHERE id = ?", (_dump(current), _dump(person), now, closed_at, record["id"]))
 
-        # The bot writing the record is the end of a pressed button's job, whatever it changed.
-        if actor.kind == "bot" and record.get("running"):
+        # The bot writing the record is the end of a pressed button's job, whatever it changed (its scripts don't count:
+        # a feed refreshing the record says nothing about the job).
+        if actor.kind == "bot" and actor.via != "script" and record.get("running"):
             conn.execute("UPDATE records SET running = NULL WHERE id = ?", (record["id"],))
 
         return self._record(conn.execute("SELECT * FROM records WHERE id = ?", (record["id"],)).fetchone()), changed, kept
@@ -698,7 +747,7 @@ class Store:
             now = self._now()
             self._log(conn, record["id"], actor, "_note", None, note, now)
             # A bot's note ends a pressed button's job too (it may report that it could not do it).
-            conn.execute("UPDATE records SET updated_at = ?, running = CASE WHEN ? THEN NULL ELSE running END WHERE id = ?", (now, actor.kind == "bot", record["id"]))
+            conn.execute("UPDATE records SET updated_at = ?, running = CASE WHEN ? THEN NULL ELSE running END WHERE id = ?", (now, actor.kind == "bot" and actor.via != "script", record["id"]))
 
             return {"record": record["id"], "note": note, "at": now, "by": actor.name}
 
@@ -758,6 +807,36 @@ class Store:
             record = {**record, "running": job}
 
             return {"record": record, "running": job, "message": action_message(collection, record, action, self._presentation(conn, collection, record))}
+
+    def pending(self, actor: Actor, ref, where=None, retry_after: int = 6 * 3600) -> list[str]:
+        """What is waiting for the bot in a collection, as stable lines for a Hermes `monitor_script`: open records that
+        match `where`, sorted, each with its last change. A record still waiting after `retry_after` seconds adds a retry
+        number that grows once per window, so a monitor whose model run failed wakes the bot again a few times a day
+        rather than never (Hermes stores the monitor's baseline even when the run fails)."""
+        now = self._now()
+
+        with self._db() as conn:
+            collection = self._find_collection(conn, actor, ref)
+            fields = collection["fields"]
+
+            try:
+                spec = Q.clean_filter(where, fields)
+            except (Q.QueryError, F.FieldError) as error:
+                raise DashboardError(str(error)) from None
+
+            show = self._presentation(conn, collection, {"values": {}})
+            lines = []
+
+            for record in sorted(self._records(conn, collection["key"]), key=lambda item: item["id"]):
+                if record["closed_at"] or not Q.matches(spec, record, fields, now):
+                    continue
+
+                waited = now - record["updated_at"]
+                retry = int(waited // retry_after) if retry_after > 0 and waited >= retry_after else 0
+                name = str(record["values"].get(show["title"] or "") or "")[:80]
+                lines.append(f"{record['id']} {record['updated_at']}{f' retry:{retry}' if retry else ''} {name}".rstrip())
+
+            return lines
 
     def history(self, conn, record_id: str, limit: int = MAX_HISTORY) -> list[dict]:
         rows = conn.execute("SELECT * FROM changes WHERE record = ? ORDER BY id DESC LIMIT ?", (record_id, limit)).fetchall()
@@ -871,16 +950,45 @@ class Store:
         vid = _slug(raw.get("id") or _slugify(title), "view id")
         kind = str(raw.get("kind") or "").strip().lower()
 
+        raw_config = dict(raw.get("config") or {})
+        live = raw.get("source") or raw_config.pop("source", None)
+        preview = None
+
+        if live is not None:
+            # A live view: read its source once now, so a mistake comes back to the bot at once and the rows' types are
+            # fixed from real data (the declared `fields` win).
+            if kind not in L.VIEW_KINDS:
+                raise DashboardError(f"a live view is one of {', '.join(L.VIEW_KINDS)}")
+
+            if raw_config.get("needs_you"):
+                raise DashboardError("a live view can't light the amber dot yet; keep what needs your person in a collection (a script feed can fill it)")
+
+            home = L.bot_home(self.root, actor.name)
+
+            try:
+                source = L.clean_source(live, home)
+                declared = live.get("fields") if isinstance(live, dict) else None
+                rows = L.read(source, home, self._now())
+            except (L.SourceError, OSError, ValueError) as error:
+                raise DashboardError(f"source: {error}") from None
+
+            live_fields = L.infer_fields(rows, declared)
+            preview = rows[:3]
+
         with self._db(write=True) as conn:
             collection = None
 
-            if kind not in ("summary", "stat"):
+            if live is None and kind not in ("summary", "stat"):
                 collection = self._find_collection(conn, actor, raw.get("collection"))
 
             try:
-                config = Q.clean_view_config(kind, raw.get("config"), collection["fields"] if collection else None)
+                config = Q.clean_view_config(kind, raw_config, live_fields if live is not None else collection["fields"] if collection else None)
             except (Q.QueryError, F.FieldError) as error:
                 raise DashboardError(str(error)) from None
+
+            if live is not None:
+                config["source"] = source
+                config["source_fields"] = live_fields
 
             key = f"{actor.name}/{vid}"
             existing = conn.execute("SELECT position FROM views WHERE key = ?", (key,)).fetchone()
@@ -900,8 +1008,17 @@ class Store:
                 "ON CONFLICT (key) DO UPDATE SET collection = excluded.collection, title = excluded.title, kind = excluded.kind, config = excluded.config, position = excluded.position, updated_at = excluded.updated_at",
                 (key, actor.name, vid, collection["key"] if collection else None, title, kind, _dump(config), position, self._now()),
             )
+            now = self._now()
+            conn.execute("INSERT INTO view_log (view, at) VALUES (?, ?)", (key, now))
+            conn.execute("DELETE FROM view_log WHERE at < ?", (now - 86_400,))
+            view = self._view(conn.execute("SELECT * FROM views WHERE key = ?", (key,)).fetchone())
+            view["rewrites_last_hour"] = conn.execute("SELECT COUNT(*) FROM view_log WHERE view = ? AND at >= ?", (key, now - 3600)).fetchone()[0]
 
-            return self._view(conn.execute("SELECT * FROM views WHERE key = ?", (key,)).fetchone())
+            if live is not None:
+                L.forget(key)
+                view["preview"] = preview
+
+            return view
 
     def remove_view(self, actor: Actor, view_id) -> bool:
         with self._db(write=True) as conn:
@@ -920,10 +1037,44 @@ class Store:
 
     # -- what the app shows -----------------------------------------------------------------------------------
 
-    def dashboard(self, profile: str) -> dict:
-        """One bot's dashboard: each view computed, and the fields of the collections they show."""
+    @staticmethod
+    def _db_version(conn, profile: str) -> str:
+        change = conn.execute("SELECT COALESCE(MAX(id), 0) FROM changes").fetchone()[0]
+        views = conn.execute("SELECT COUNT(*), COALESCE(MAX(updated_at), 0) FROM views WHERE dashboard = ?", (profile,)).fetchone()
+
+        return f"{change}.{views[0]}.{views[1]}"
+
+    def version(self, profile: str, fresh: bool = False) -> str:
+        """A cheap token that changes whenever anything on this bot's dashboard could have: a record changed anywhere, one
+        of its views was set or removed, or a live source was read again (its cache expired). Computes no views."""
         profile = Actor.bot(profile).name
         now = self._now()
+        home = L.bot_home(self.root, profile)
+
+        with self._db() as conn:
+            db_version = self._db_version(conn, profile)
+            live = [self._view(row) for row in conn.execute("SELECT * FROM views WHERE dashboard = ?", (profile,))]
+
+        as_of = [L.cached(f"{profile}/{view['id']}", view["config"]["source"], home, now, fresh=fresh)["as_of"] or 0 for view in live if view["config"].get("source")]
+
+        return f"{db_version}.{max(as_of, default=0)}"
+
+    def _kept(self, view: dict, collection: dict | None) -> dict:
+        """How a view stays fresh, for the app's panel menu."""
+        if view["config"].get("source"):
+            return {"how": "live", "ttl": view["config"]["source"]["ttl"]}
+
+        if view["kind"] in ("summary", "stat"):
+            return {"how": "written"}
+
+        return {"how": "computed", **({"feed": collection["feed"]} if collection and collection.get("feed") else {})}
+
+    def dashboard(self, profile: str, fresh: bool = False, live: bool = True) -> dict:
+        """One bot's dashboard: each view computed (live views read through their cache), the fields of the collections
+        they show, and how each view is kept."""
+        profile = Actor.bot(profile).name
+        now = self._now()
+        home = L.bot_home(self.root, profile)
 
         with self._db() as conn:
             views = [self._view(row) for row in conn.execute("SELECT * FROM views WHERE dashboard = ? ORDER BY position, title", (profile,))]
@@ -939,17 +1090,31 @@ class Store:
                     records[key] = self._records(conn, key) if row else []
 
             computed = []
+            live_as_of = []
 
             for view in views:
                 collection = collections.get(view["collection"]) if view["collection"] else None
+                source = view["config"].get("source")
 
                 if view["collection"] and collection is None:
                     continue
 
-                computed.append(Q.compute_view({**view, "updated_at": max(view["updated_at"], max((record["updated_at"] for record in records.get(view["collection"], [])), default=0))}, collection["fields"] if collection else None, records.get(view["collection"], []), now))
+                if source:
+                    # Live sources are read only when someone looks (live=False: the summary for Home, which needs no rows).
+                    entry = L.cached(f"{profile}/{view['id']}", source, home, now, fresh=fresh) if live else L.peek(f"{profile}/{view['id']}")
+                    fields = view["config"].get("source_fields") or []
+                    result = Q.compute_view({**view, "updated_at": entry["as_of"] or view["updated_at"]}, fields, L.as_records(entry["rows"], fields, now), now)
+                    result["live"] = {"as_of": entry["as_of"], **({"error": entry["error"]} if entry["error"] else {})}
+                    live_as_of.append(entry["as_of"] or 0)
+                else:
+                    result = Q.compute_view({**view, "updated_at": max(view["updated_at"], max((record["updated_at"] for record in records.get(view["collection"], [])), default=0))}, collection["fields"] if collection else None, records.get(view["collection"], []), now)
+
+                result["kept"] = self._kept(view, collection)
+                computed.append(result)
 
             return {
                 "profile": profile,
+                "version": f"{self._db_version(conn, profile)}.{max(live_as_of, default=0)}",
                 "views": computed,
                 "collections": {key: {"title": collection["title"], "owner": collection["owner"], "fields": collection["fields"]} for key, collection in collections.items() if collection},
                 "now": now,
@@ -964,7 +1129,7 @@ class Store:
             dashboards = [row[0] for row in conn.execute("SELECT DISTINCT dashboard FROM views")]
 
         for profile in dashboards:
-            board = self.dashboard(profile)
+            board = self.dashboard(profile, live=False)
             flagged: set = set()
             updated = 0
 
