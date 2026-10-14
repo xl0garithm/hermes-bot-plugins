@@ -2,7 +2,7 @@
   "name": "hermes-dashboard",
   "label": "Dashboards",
   "description": "Collections each bot keeps for you (its own fields, a status, history), shown as panels in the HermesBot app.",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "tab": {
     "path": "/hermes-dashboard",
     "hidden": true

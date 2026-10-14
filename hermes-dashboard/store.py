@@ -191,6 +191,14 @@ def _clean_actions(raw, fields: list[dict]) -> list[dict]:
     return cleaned
 
 
+def _offered(action: dict, record: dict, fields: list[dict], now: float) -> bool:
+    """Whether a record offers a button now: its filter matches, and the draft it sends (if any) has been written."""
+    if action.get("draft") and not str(record["values"].get(action["draft"]) or "").strip():
+        return False
+
+    return not action.get("when") or Q.matches(action["when"], record, fields, now)
+
+
 def _plain(field: dict, value) -> str:
     """A value in words for the message a pressed button sends the bot."""
     if field["type"] == "datetime" and isinstance(value, (int, float)):
@@ -709,7 +717,7 @@ class Store:
             if Q.running(record, now):
                 raise DashboardError(f"{record['running']['label']} is already under way for this record")
 
-            if action.get("when") and not Q.matches(action["when"], record, collection["fields"], now):
+            if not _offered(action, record, collection["fields"], now):
                 raise DashboardError(f"{action['label']} isn't offered for this record right now")
 
             job = {"action": action["id"], "label": action["label"], "session": session if SESSION.match(str(session or "")) else None, "at": now}
@@ -753,7 +761,7 @@ class Store:
 
         now = self._now()
         job = Q.running(record, now)
-        offered = [] if record.get("closed_at") or job else [{"id": action["id"], "label": action["label"]} for action in collection.get("actions", []) if not action.get("when") or Q.matches(action["when"], record, fields, now)]
+        offered = [] if record.get("closed_at") or job else [{"id": action["id"], "label": action["label"]} for action in collection.get("actions", []) if _offered(action, record, fields, now)]
 
         return {
             "title": show.get("title"),

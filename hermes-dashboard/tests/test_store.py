@@ -256,6 +256,12 @@ class Buttons(Setup):
         self.store.update(YOU, self.record["id"], {"status": "Replied"})
         self.assertEqual(self.store.get_record(YOU, self.record["id"])["show"]["actions"], [])
 
+    def test_a_button_that_sends_a_draft_waits_for_the_draft(self):
+        empty = self.add("m2")["record"]
+        self.assertEqual(self.store.get_record(YOU, empty["id"])["show"]["actions"], [])
+        with self.assertRaises(S.DashboardError):
+            self.store.start_action(YOU, empty["id"], "send")
+
     def test_pressing_one_hands_the_bot_the_job(self):
         self.store.update(YOU, self.record["id"], {"reply": "Hi Dana, 11 AM works. See you Friday!"})
         pressed = self.store.start_action(YOU, self.record["id"], "send", "20261013_094100_ab12")

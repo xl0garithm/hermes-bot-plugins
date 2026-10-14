@@ -48,7 +48,7 @@ class Api(unittest.TestCase):
             del sys.modules[key]
 
     def test_status_and_summary(self):
-        self.assertEqual(self.client.get(f"{self.base}/status").json()["version"], "0.2.1")
+        self.assertEqual(self.client.get(f"{self.base}/status").json()["version"], "0.2.2")
         self.assertEqual(self.client.get(f"{self.base}/bots").json()["bots"]["concierge"]["needs_you"], 1)
 
     def test_a_dashboard_computed(self):
