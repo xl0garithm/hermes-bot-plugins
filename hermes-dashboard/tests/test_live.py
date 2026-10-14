@@ -64,7 +64,7 @@ class LiveSources(Root):
         self.assertEqual(view["preview"][0]["subject"], "Invoice")
         panel = self.store.dashboard("concierge")["views"][0]
         self.assertEqual([row["cells"][0]["value"] for row in panel["rows"]], ["Invoice", "Hello"])
-        self.assertEqual(panel["kept"], {"how": "live", "ttl": 60})
+        self.assertEqual(panel["kept"], {"how": "live", "kind": "sqlite", "ttl": 60})
         self.assertTrue(panel["rows"][0]["id"].startswith("live:"))
 
     def test_a_sqlite_source_only_reads(self):

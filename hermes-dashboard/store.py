@@ -1062,7 +1062,7 @@ class Store:
     def _kept(self, view: dict, collection: dict | None) -> dict:
         """How a view stays fresh, for the app's panel menu."""
         if view["config"].get("source"):
-            return {"how": "live", "ttl": view["config"]["source"]["ttl"]}
+            return {"how": "live", "kind": view["config"]["source"]["kind"], "ttl": view["config"]["source"]["ttl"]}
 
         if view["kind"] in ("summary", "stat"):
             return {"how": "written"}
