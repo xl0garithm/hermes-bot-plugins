@@ -67,7 +67,7 @@ assert manager._hooks.get("pre_approval_request"), "approval hook not registered
 # Register the phone with the very store the plugin uses.
 from hermes_constants import get_default_hermes_root  # noqa: E402
 
-store_module = sys.modules[[m for m in sys.modules if m.endswith(".store") and "hermes" in m and "push" in m][0]]
+store_module = sys.modules[[m for m in sys.modules if m.endswith(".store") and "hermes_bot_mobile" in m.replace("-", "_")][0]]
 store_module.DeviceStore().upsert(phone.endpoint, phone.p256dh, phone.auth, "Integration phone")
 print("devices file:", get_default_hermes_root() / "hermes-bot-mobile" / "devices.json")
 
@@ -88,9 +88,14 @@ path, headers, body = received[0]
 message = json.loads(phone.read(body))
 print("push headers:", {k: v for k, v in headers.items() if k in ("Content-Encoding", "Urgency", "TTL")})
 print("push message:", message)
-assert message["body"] == "Needs your OK to recursive delete"
+assert message["body"] == "Needs your OK: recursive delete"
 assert message["url"] == "hermesbot://bot/default"
 assert "secret-build-dir" not in json.dumps(message)
+
+# A routine that ran fine is never pushed (0.1.2): nothing more reaches the listener.
+arrived.clear()
+invoke_hook("on_session_end", session_id="cron_0a1b2c3d4e5f_20261014_090000", platform="cron", completed=True, failed=False, interrupted=False)
+assert not arrived.wait(2), "a routine that ran was pushed"
 print("OK")
 
 server.shutdown()

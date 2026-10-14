@@ -40,15 +40,20 @@ class Words(unittest.TestCase):
         self.assertEqual((payload["title"], payload["type"], payload["url"]), ("Hydra", "Approvals", "hermesbot://bot/hydra"))
 
     def test_the_link_cannot_be_broken_by_a_strange_profile_name(self):
-        payload = notify.build("done", profile="a b/c?d", bot="x", body="y", key="k")
+        payload = notify.build("question", profile="a b/c?d", bot="x", body="y", key="k")
         self.assertEqual(payload["url"], "hermesbot://bot/a%20b%2Fc%3Fd")
 
     def test_sentences(self):
-        self.assertEqual(notify.lines("approval", detail="recursive delete"), "Needs your OK to recursive delete")
+        self.assertEqual(notify.lines("approval", detail="recursive delete"), "Needs your OK: recursive delete")
         self.assertEqual(notify.lines("approval"), "Needs your OK")
         self.assertEqual(notify.lines("question", detail="Which one?"), "Asks: Which one?")
-        self.assertEqual(notify.lines("done", seconds=95), "Finished after 2 min")
+        self.assertEqual(notify.lines("routine", detail="Inbox drafts", failed=True), "Routine \u201cInbox drafts\u201d failed")
         self.assertEqual(notify.lines("routine", failed=True), "A routine failed")
+
+    def test_a_long_title_is_cut(self):
+        payload = notify.build("approval", profile="hydra", bot="Hydra \u00b7 " + "a very long side chat title " * 4, body="b", key="k")
+        self.assertLessEqual(len(payload["title"]), notify.TITLE_LIMIT)
+        self.assertTrue(payload["title"].endswith("\u2026"))
 
 
 class Delivery(unittest.TestCase):

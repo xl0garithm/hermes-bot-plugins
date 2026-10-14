@@ -39,7 +39,8 @@ PRESENCE_TTL = 45.0
 PRESENCE_TTL_MAX = 120.0
 MAX_PRESENCE_SESSIONS = 16
 
-#: Per-bot levels: `all` is everything, `needs_you` is only what blocks the bot, `off` is silence.
+#: Per-bot levels: `off` is silence. Since 0.1.2 `all` and `needs_you` are the same (approvals, questions and broken
+#: routines): nothing else is pushed any more. Both stay accepted so older apps keep working.
 LEVELS = ("all", "needs_you", "off")
 
 

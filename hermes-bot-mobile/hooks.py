@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import logging
 import re
-import threading
-import time
 from pathlib import Path
 
 try:
@@ -22,19 +20,17 @@ except ImportError:  # the tests import the modules flat
 
 log = logging.getLogger("hermes-bot-mobile")
 
-#: Turns we have seen start, so `post_llm_call` can tell a long one from a short one.
-MAX_TRACKED_TURNS = 256
-
 #: Hermes's persistent session ids (`20261010_011409_0dc184`): what the app keeps a chat by and opens it with.
 SESSION_ID = re.compile(r"^\d{8}_\d{6}_[0-9a-f]+$")
 
 #: A group room's id, as Hermes requires it.
 ROOM_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
-#: Turns that are not the person's own chat with a bot, by the session's surface: another bot's message to this one (it
-#: runs as `hermes -p <bot> chat`), a group-room member at work, a subagent, and a routine's run (it has its own push).
-#: That one of them finished is no news for the phone, and its link would open a chat the person never had.
-NOT_A_CHAT = frozenset({"cli", "bot_room", "subagent", "cron"})
+#: What the app titles a bot's main chat: a push about it needs no chat name, the bot's name says it.
+MAIN_CHAT_TITLE = "bot chat"
+
+#: A routine run's session id (`cron_<job id>_<YYYYmmdd>_<HHMMSS>`), which names the job.
+CRON_SESSION = re.compile(r"^cron_(.+)_\d{8}_\d{6}$")
 
 
 def turn_context() -> dict:
@@ -73,6 +69,42 @@ def chat_id(*candidates) -> str:
             return value
 
     return ""
+
+
+def chat_title(chat: str) -> str:
+    """A side chat's title ("Review dashboard panel upkeep"), so a push says which chat it is about; "" for the bot's main
+    chat or when it can't be read. Read-only, and Hermes's state database is in WAL mode, so a reader never waits."""
+    if not chat:
+        return ""
+
+    try:
+        from hermes_state import SessionDB
+
+        db = SessionDB(read_only=True)
+
+        try:
+            title = str(db.get_session_title(chat) or "").strip()
+        finally:
+            db.close()
+    except Exception:
+        return ""
+
+    return "" if title.lower() == MAIN_CHAT_TITLE else title
+
+
+def routine_name(session_id: str) -> str:
+    """The name of the routine a cron run's session belongs to, or ""."""
+    match = CRON_SESSION.match(str(session_id or ""))
+
+    if not match:
+        return ""
+
+    try:
+        from cron.jobs import get_job
+
+        return str((get_job(match.group(1)) or {}).get("name") or "").strip()
+    except Exception:
+        return ""
 
 
 def current_profile() -> str:
@@ -140,16 +172,15 @@ def question_text(args) -> str:
 
 
 class PushHooks:
-    def __init__(self, store: DeviceStore | None = None, pusher: notify.Pusher | None = None, profile=current_profile, name=bot_name, clock=time.monotonic, context=turn_context):
+    def __init__(self, store: DeviceStore | None = None, pusher: notify.Pusher | None = None, profile=current_profile, name=bot_name, context=turn_context, title=chat_title, routine=routine_name):
         self.store = store or DeviceStore()
         self.pusher = pusher or notify.Pusher(self.store)
         self.dedupe = notify.Dedupe()
         self._profile = profile
         self._name = name
-        self._clock = clock
         self._context = context
-        self._starts: dict[str, float] = {}
-        self._lock = threading.Lock()
+        self._title = title
+        self._routine = routine
 
     # -- helpers -----------------------------------------------------------------------------------------------
 
@@ -166,32 +197,30 @@ class PushHooks:
 
         return {"chat": chat_id(context["chat"], *ids)}
 
-    def _emit(self, kind: str, key: str, *, detail: str = "", seconds: float = 0, failed: bool = False, session: str = "", target: dict | None = None) -> None:
+    def _emit(self, kind: str, key: str, *, detail: str = "", failed: bool = False, session: str = "", target: dict | None = None) -> None:
+        """Push one thing that needs the person: an approval, a question, or a routine that broke. Finished replies and
+        routines that ran are never pushed: they show on Home and in the bot's routines, and a buzz for them is noise."""
         profile = self._profile()
-        level = self.store.level(profile)
 
-        if level == "off":
+        if self.store.level(profile) == "off":
             return
 
-        # The phone is in front: what is on its screen needs no push, and a finished reply shows on Home already.
+        # The phone is in front with this chat on screen: the card is already in front of the person.
         seen = self.store.presence()
 
-        if seen["foreground"] and (kind == "done" or (kind == "routine" and not failed) or (session and session in seen["sessions"])):
-            return
-
-        # `needs_you` keeps the bot quiet unless it is blocked on you, or a routine broke.
-        quiet = kind == "done" or (kind == "routine" and not failed)
-
-        if level == "needs_you" and quiet:
+        if seen["foreground"] and session and session in seen["sessions"]:
             return
 
         if not self.store.devices() or not self.dedupe.first(f"{kind}:{profile}:{key}"):
             return
 
-        body = notify.lines(kind, detail=detail, seconds=seconds, failed=failed)
+        body = notify.lines(kind, detail=detail, failed=failed)
         target = target or {}
+        # Which chat it is about, by its title, so the notification makes sense without opening it.
+        about = self._title(target.get("chat", "")) if target.get("chat") else ""
+        title = f"{self._name(profile)} · {about}" if about else self._name(profile)
         url = notify.INBOX if target.get("inbox") else notify.link(profile, chat=target.get("chat", ""), room=target.get("room", ""), page=target.get("page", ""))
-        self.pusher.send(kind, notify.build(kind, profile=profile, bot=self._name(profile), body=body, key=key, url=url))
+        self.pusher.send(kind, notify.build(kind, profile=profile, bot=title, body=body, key=key, url=url))
 
     # -- hooks -------------------------------------------------------------------------------------------------
 
@@ -217,40 +246,13 @@ class PushHooks:
         target = self._target(kw.get("session_id"))
         self._emit("question", key, detail=notify.tidy(question_text(kw.get("args"))), session=target.get("chat") or str(kw.get("session_id") or ""), target=target)
 
-    def on_turn_start(self, **kw) -> None:
-        session = str(kw.get("session_id") or "")
-
-        with self._lock:
-            if len(self._starts) >= MAX_TRACKED_TURNS:
-                self._starts.pop(next(iter(self._starts)))
-
-            self._starts[session] = self._clock()
-
-    def on_turn_done(self, **kw) -> None:
-        session = str(kw.get("session_id") or "")
-
-        with self._lock:
-            started = self._starts.pop(session, None)
-
-        # Only the person's own chats: not another bot's message, a room member, a subagent or a routine's run.
-        if started is None or str(kw.get("platform") or "").lower() in NOT_A_CHAT:
-            return
-
-        seconds = self._clock() - started
-
-        if seconds >= notify.DONE_AFTER_SECONDS:
-            target = self._target(session)
-
-            # A room member, known by its context when the platform did not say: its turn finishing is the room's business.
-            if not (target.get("room") or target.get("inbox")):
-                self._emit("done", f"{session}:{int(started)}", seconds=seconds, session=target.get("chat") or session, target=target)
-
     def on_session_end(self, **kw) -> None:
-        if kw.get("platform") != "cron" or kw.get("interrupted"):
+        # Only a routine that broke: one that ran fine is no news for the phone.
+        if kw.get("platform") != "cron" or kw.get("interrupted") or not kw.get("failed"):
             return
 
         session = str(kw.get("session_id") or "")
-        self._emit("routine", session, failed=bool(kw.get("failed")), target={"page": "routines"})
+        self._emit("routine", session, detail=self._routine(session), failed=True, target={"page": "routines"})
 
     def callbacks(self) -> dict:
         """Hook name -> callback, each wrapped so that nothing it does can reach the bot."""
@@ -266,7 +268,5 @@ class PushHooks:
         return {
             "pre_approval_request": guard(self.on_approval),
             "pre_tool_call": guard(self.on_tool),
-            "pre_llm_call": guard(self.on_turn_start),
-            "post_llm_call": guard(self.on_turn_done),
             "on_session_end": guard(self.on_session_end),
         }

@@ -1,7 +1,8 @@
 """Turning "a bot needs you" into a push on the phone, without ever blocking the bot.
 
-A notification carries as little as possible: the bot, what it wants in a few words, and where tapping it should
-land. **Never the command**, and never a result: a lock screen is not private. The app fetches the real thing
+A notification carries as little as possible: the bot and the chat or routine it is about, what it wants in a few words,
+and where tapping it should land. **Never the command**, and never a result: a lock screen is not private. Only what
+needs the person is pushed (an approval, a question, a routine that broke), never that a reply finished or a routine ran. The app fetches the real thing
 (with its Allow / Deny buttons) once the person opens it.
 """
 
@@ -27,17 +28,16 @@ except ImportError:  # the tests import the modules flat
 log = logging.getLogger("hermes-bot-mobile")
 
 #: The notification channel the phone files each kind under (its name is what the person sees in Android settings).
-CHANNELS = {"approval": "Approvals", "question": "Questions", "done": "Results", "routine": "Routines", "test": "Results"}
+CHANNELS = {"approval": "Approvals", "question": "Questions", "routine": "Routines", "test": "Results"}
 
 #: Seconds a push may wait in the push service if the phone is off, and how it is flagged for delivery.
-TTL_SECONDS = {"approval": 300, "question": 3600, "done": 3600, "routine": 3600, "test": 60}
-URGENCY = {"approval": "high", "question": "high", "done": "normal", "routine": "low", "test": "high"}
+TTL_SECONDS = {"approval": 300, "question": 3600, "routine": 3600, "test": 60}
+URGENCY = {"approval": "high", "question": "high", "routine": "normal", "test": "high"}
 
 BODY_LIMIT = 80
+#: Room for "Bot · the chat's title".
+TITLE_LIMIT = 60
 SEND_TIMEOUT = 10.0
-
-#: A turn shorter than this finishes while the person is probably still looking at it.
-DONE_AFTER_SECONDS = 60
 
 
 def tidy(text: str, limit: int = BODY_LIMIT) -> str:
@@ -106,27 +106,23 @@ def build(kind: str, *, profile: str, bot: str, body: str, key: str, url: str | 
     """
     return {
         "id": notification_id(kind, profile, key),
-        "title": tidy(bot, 40) or "Hermes",
+        "title": tidy(bot, TITLE_LIMIT) or "Hermes",
         "body": tidy(body),
         "type": CHANNELS[kind],
         "url": url or link(profile),
     }
 
 
-def lines(kind: str, *, detail: str = "", seconds: float = 0, failed: bool = False) -> str:
-    """The sentence under the bot's name."""
+def lines(kind: str, *, detail: str = "", failed: bool = False) -> str:
+    """The sentence under the title: what the bot needs, in its own words where they are safe to show."""
     if kind == "approval":
-        return f"Needs your OK to {detail}" if detail else "Needs your OK"
+        return f"Needs your OK: {detail}" if detail else "Needs your OK"
 
     if kind == "question":
         return f"Asks: {detail}" if detail else "Has a question for you"
 
-    if kind == "routine":
-        return "A routine failed" if failed else "A routine ran"
-
-    minutes = max(1, round(seconds / 60))
-
-    return f"Finished after {minutes} min"
+    # A routine is only pushed when it broke.
+    return f"Routine “{detail}” failed" if detail else "A routine failed"
 
 
 @dataclass

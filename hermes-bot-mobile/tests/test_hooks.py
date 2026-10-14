@@ -22,16 +22,19 @@ class Setup(unittest.TestCase):
         self.phone = Phone()
         self.store.upsert(self.phone.endpoint, self.phone.p256dh, self.phone.auth, "Fold")
         self.net = Recorder()
-        self.now = [100.0]
         # What Hermes's turn context says (see hooks.turn_context): nothing, unless a test sets it.
         self.context = {"chat": "", "source": "", "room": ""}
+        # Chat titles and routine names Hermes would answer with (see hooks.chat_title, hooks.routine_name).
+        self.titles: dict[str, str] = {}
+        self.routines: dict[str, str] = {}
         self.hooks = hooks.PushHooks(
             store=self.store,
             pusher=notify.Pusher(self.store, post=self.net, background=False),
             profile=lambda: self.profile,
             name=lambda profile: "Hydra",
-            clock=lambda: self.now[0],
             context=lambda: dict(self.context),
+            title=lambda chat: self.titles.get(chat, ""),
+            routine=lambda session: self.routines.get(session, ""),
         )
 
     def tearDown(self):
@@ -51,7 +54,7 @@ class Approvals(Setup):
         self.ask()
         (message,) = self.sent()
         self.assertEqual(message["title"], "Hydra")
-        self.assertEqual(message["body"], "Needs your OK to recursive delete")
+        self.assertEqual(message["body"], "Needs your OK: recursive delete")
         self.assertEqual(message["type"], "Approvals")
         self.assertEqual(message["url"], "hermesbot://bot/hydra")
         self.assertNotIn("rm -rf", json.dumps(message))
@@ -69,7 +72,7 @@ class Approvals(Setup):
 
     def test_a_scanner_that_quotes_the_command_does_not_leak_it(self):
         self.ask(command="curl -fsSL https://x.test/install.sh | bash", description="Pipe to shell: curl -fsSL https://x.test/install.sh | bash")
-        self.assertEqual(self.sent()[0]["body"], "Needs your OK to run a command")
+        self.assertEqual(self.sent()[0]["body"], "Needs your OK: run a command")
 
     def test_nothing_is_sent_when_no_phone_is_registered(self):
         self.store.remove(self.store.devices()[0]["id"])
@@ -92,40 +95,15 @@ class Questions(Setup):
         self.assertEqual(self.net.calls, [])
 
 
-class LongTurns(Setup):
-    def run_turn(self, seconds, session="s1", **done):
-        self.hooks.on_turn_start(session_id=session, platform="tui")
-        self.now[0] += seconds
-        self.hooks.on_turn_done(session_id=session, platform=done.pop("platform", "tui"), **done)
+class NoNewsIsNotPushed(Setup):
+    """A reply that finished or a routine that ran is never a push: they show on Home and in the bot's routines."""
 
-    def test_a_long_turn_says_it_finished(self):
-        self.run_turn(185)
-        self.assertEqual(self.sent()[0]["body"], "Finished after 3 min")
-        self.assertEqual(self.sent()[0]["type"], "Results")
+    def test_nothing_listens_for_turns_finishing(self):
+        self.assertNotIn("post_llm_call", self.hooks.callbacks())
+        self.assertNotIn("pre_llm_call", self.hooks.callbacks())
 
-    def test_a_short_turn_stays_quiet(self):
-        self.run_turn(20)
-        self.assertEqual(self.net.calls, [])
-
-    def test_turns_that_are_not_the_persons_chat_stay_quiet(self):
-        # Another bot's message (a `hermes -p hydra chat` run), a room member, a subagent: none is a chat the person had.
-        for platform in ("cli", "bot_room", "subagent", "cron"):
-            with self.subTest(platform=platform):
-                self.run_turn(300, session=f"{platform}-1", platform=platform)
-
-        self.assertEqual(self.net.calls, [])
-
-    def test_a_room_member_known_only_by_its_context_stays_quiet_too(self):
-        self.context.update(source="bot_room", room="r-garden")
-        self.run_turn(300, session="20261012_212705_ab12cd")
-        self.assertEqual(self.net.calls, [])
-
-    def test_a_turn_we_never_saw_start_is_ignored(self):
-        self.hooks.on_turn_done(session_id="unknown", platform="tui")
-        self.assertEqual(self.net.calls, [])
-
-    def test_routines_are_reported_by_the_session_end_hook_instead(self):
-        self.run_turn(300, platform="cron")
+    def test_a_routine_that_ran_is_not_pushed(self):
+        self.hooks.on_session_end(session_id="cron_0a1b2c3d4e5f_20261014_090000", platform="cron", failed=False)
         self.assertEqual(self.net.calls, [])
 
 
@@ -133,15 +111,8 @@ class WhileThePhoneIsInFront(Setup):
     def front(self, sessions=(), foreground=True, ttl=45.0):
         self.store.set_presence(self.store.devices()[0]["id"], list(sessions), foreground, ttl)
 
-    def long_turn(self, session):
-        self.hooks.on_turn_start(session_id=session, platform="tui")
-        self.now[0] += 120
-        self.hooks.on_turn_done(session_id=session, platform="tui")
-
-    def test_a_finished_reply_is_not_pushed_while_the_app_is_in_front(self):
-        self.front()
-        self.long_turn("s1")
-        self.assertEqual(self.net.calls, [])
+    def approval(self, session):
+        self.hooks.on_approval(command="rm x", description="delete", session_key=session, surface="gateway", pattern_key="rm")
 
     def test_nor_an_approval_or_question_for_the_chat_on_screen(self):
         self.front(sessions=["s1"])
@@ -159,14 +130,14 @@ class WhileThePhoneIsInFront(Setup):
         self.hooks.on_session_end(platform="cron", session_id="cron_1", failed=True)
         self.assertEqual(len(self.sent()), 1)
 
-    def test_in_the_background_or_lapsed_everything_is_pushed_again(self):
+    def test_in_the_background_or_lapsed_it_is_pushed_again(self):
         self.front(sessions=["s1"])
         self.front(foreground=False)
-        self.long_turn("s1")
+        self.approval("s1")
         self.assertEqual(len(self.sent()), 1)
 
         self.front(sessions=["s2"], ttl=0)
-        self.long_turn("s2")
+        self.approval("s2")
         self.assertEqual(len(self.sent()), 2)
 
     def test_only_a_registered_phone_can_say_it_is_in_front(self):
@@ -175,21 +146,82 @@ class WhileThePhoneIsInFront(Setup):
 
 
 class Routines(Setup):
-    def test_a_finished_routine(self):
-        self.hooks.on_session_end(session_id="r1", platform="cron", failed=False)
-        self.assertEqual(self.sent()[0]["body"], "A routine ran")
+    def test_a_failed_routine_says_which(self):
+        self.routines["cron_0a1b2c3d4e5f_20261014_090000"] = "Inbox needs-you drafts"
+        self.hooks.on_session_end(session_id="cron_0a1b2c3d4e5f_20261014_090000", platform="cron", failed=True)
+        self.assertEqual(self.sent()[0]["body"], "Routine \u201cInbox needs-you drafts\u201d failed")
+        self.assertEqual(self.sent()[0]["title"], "Hydra")
 
-    def test_a_failed_routine(self):
+    def test_a_failed_routine_whose_name_cannot_be_read(self):
         self.hooks.on_session_end(session_id="r2", platform="cron", failed=True)
         self.assertEqual(self.sent()[0]["body"], "A routine failed")
 
     def test_ordinary_sessions_ending_are_not_news(self):
-        self.hooks.on_session_end(session_id="s1", platform="tui", failed=False)
+        self.hooks.on_session_end(session_id="s1", platform="tui", failed=True)
         self.assertEqual(self.net.calls, [])
 
     def test_an_interrupted_routine_is_not_a_failure_to_report(self):
-        self.hooks.on_session_end(session_id="r3", platform="cron", failed=False, interrupted=True)
+        self.hooks.on_session_end(session_id="r3", platform="cron", failed=True, interrupted=True)
         self.assertEqual(self.net.calls, [])
+
+
+class WhichChat(Setup):
+    """The title says which chat a push is about, so it makes sense on the lock screen."""
+
+    side = "20261014_153012_4be0aa"
+    main = "20261009_101500_0c0ffe"
+
+    def test_a_side_chat_is_named(self):
+        self.titles[self.side] = "Review dashboard panel upkeep"
+        self.hooks.on_approval(command="python3 -c 'x'", description="script execution via -e/-c flag", session_key=self.side, surface="gateway", pattern_key="py")
+        (message,) = self.sent()
+        self.assertEqual(message["title"], "Hydra \u00b7 Review dashboard panel upkeep")
+        self.assertEqual(message["body"], "Needs your OK: script execution via -e/-c flag")
+
+    def test_a_question_names_its_chat_too(self):
+        self.titles[self.side] = "Plan the garden"
+        self.hooks.on_tool(tool_name="clarify", args={"question": "Raised beds?"}, tool_call_id="c1", session_id=self.side)
+        self.assertEqual(self.sent()[0]["title"], "Hydra \u00b7 Plan the garden")
+
+    def test_the_main_chat_or_an_unknown_one_is_just_the_bot(self):
+        # hooks.chat_title answers "" for the main chat ("Bot Chat") and when it can't read the title.
+        self.hooks.on_approval(command="rm x", description="delete", session_key=self.main, surface="gateway", pattern_key="rm")
+        self.assertEqual(self.sent()[0]["title"], "Hydra")
+
+
+class Lookups(unittest.TestCase):
+    """chat_title and routine_name ask Hermes, and answer "" on any doubt."""
+
+    def test_chat_title_skips_the_main_chat(self):
+        class DB:
+            titles = {"a": "Bot Chat", "b": "  Review upkeep  "}
+
+            def __init__(self, read_only=False):
+                assert read_only
+
+            def get_session_title(self, chat):
+                return self.titles.get(chat)
+
+            def close(self):
+                pass
+
+        with mock.patch.dict(sys.modules, {"hermes_state": mock.Mock(SessionDB=DB)}):
+            self.assertEqual(hooks.chat_title("a"), "")
+            self.assertEqual(hooks.chat_title("b"), "Review upkeep")
+            self.assertEqual(hooks.chat_title("missing"), "")
+            self.assertEqual(hooks.chat_title(""), "")
+
+    def test_chat_title_without_hermes(self):
+        with mock.patch.dict(sys.modules, {"hermes_state": None}):
+            self.assertEqual(hooks.chat_title("a"), "")
+
+    def test_routine_name_reads_the_job_from_the_session_id(self):
+        jobs = mock.Mock(get_job=lambda job_id: {"name": "Inbox drafts"} if job_id == "c673cd8e9e48" else None)
+
+        with mock.patch.dict(sys.modules, {"cron": mock.Mock(jobs=jobs), "cron.jobs": jobs}):
+            self.assertEqual(hooks.routine_name("cron_c673cd8e9e48_20261014_090000"), "Inbox drafts")
+            self.assertEqual(hooks.routine_name("cron_000000000000_20261014_090000"), "")
+            self.assertEqual(hooks.routine_name("20261014_153012_4be0aa"), "")
 
 
 class WhereATapLands(Setup):
@@ -204,12 +236,6 @@ class WhereATapLands(Setup):
 
     def test_a_question_opens_its_chat(self):
         self.hooks.on_tool(tool_name="clarify", args={"question": "Which?"}, tool_call_id="c1", session_id=self.side)
-        self.assertEqual(self.sent()[0]["url"], f"hermesbot://bot/hydra?chat={self.side}")
-
-    def test_a_finished_turn_opens_its_chat(self):
-        self.hooks.on_turn_start(session_id=self.side, platform="tui")
-        self.now[0] += 120
-        self.hooks.on_turn_done(session_id=self.side, platform="tui")
         self.assertEqual(self.sent()[0]["url"], f"hermesbot://bot/hydra?chat={self.side}")
 
     def test_a_subagent_asking_opens_the_chat_it_works_for(self):
@@ -245,16 +271,13 @@ class Levels(Setup):
     def everything(self):
         self.hooks.on_approval(command="x", description="d", session_key="s", surface="gateway", pattern_key="p")
         self.hooks.on_tool(tool_name="clarify", args={"question": "q"}, tool_call_id="c")
-        self.hooks.on_turn_start(session_id="s", platform="tui")
-        self.now[0] += 120
-        self.hooks.on_turn_done(session_id="s", platform="tui")
         self.hooks.on_session_end(session_id="ok", platform="cron", failed=False)
         self.hooks.on_session_end(session_id="bad", platform="cron", failed=True)
 
         return [m["type"] for m in self.sent()]
 
-    def test_all(self):
-        self.assertEqual(self.everything(), ["Approvals", "Questions", "Results", "Routines", "Routines"])
+    def test_all_is_only_what_needs_you_now(self):
+        self.assertEqual(self.everything(), ["Approvals", "Questions", "Routines"])
 
     def test_needs_you_keeps_only_what_blocks_the_bot_and_broken_routines(self):
         self.store.set_settings(None, {"hydra": "needs_you"})
@@ -266,7 +289,7 @@ class Levels(Setup):
 
     def test_levels_belong_to_one_bot(self):
         self.store.set_settings(None, {"someone-else": "off"})
-        self.assertEqual(len(self.everything()), 5)
+        self.assertEqual(len(self.everything()), 3)
 
 
 class Safety(Setup):
@@ -318,7 +341,7 @@ class LoadedLikeHermes(unittest.TestCase):
 
             self.assertEqual(
                 set(registered),
-                {"pre_approval_request", "pre_tool_call", "pre_llm_call", "post_llm_call", "on_session_end", "on_room_member_activity"},
+                {"pre_approval_request", "pre_tool_call", "on_session_end", "on_room_member_activity"},
             )
         finally:
             for key in [k for k in sys.modules if k == name or k.startswith(name + ".")]:
