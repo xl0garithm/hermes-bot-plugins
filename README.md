@@ -9,6 +9,7 @@ a Grok-Bot-style client for Hermes "Bot Mode". Each folder is one standalone Her
 | [`hermes-paperless`](hermes-paperless) | Streams Paperless-ngx documents to the app's viewer; a skill so bots can search, read and link documents; a Paperless tab in the dashboard and a page in Hermes Desktop. | `PAPERLESS_URL` and `PAPERLESS_TOKEN` (or `PAPERLESS_TOKEN_FILE`) in `~/.hermes/.env`. |
 | [`hermes-drive`](hermes-drive) | Streams Google Drive files to the app's viewer (Google Docs, Sheets and Slides as PDF); a skill so bots can search, read and link files. Read-only. | The google-workspace skill's sign-in (`~/.hermes/google_token.json`) with a Drive scope. |
 | [`hermes-dashboard`](hermes-dashboard) | Optional. A dashboard per bot in the app: collections the bot designs (its own fields, a status, history) shown as panels, four `dashboard_*` tools, and a skill that teaches it to track anything and keep it fresh with a routine. | Nothing. Install it for each bot that should keep one (see its README). |
+| [`hermes-bot-fixes`](hermes-bot-fixes) | Local fixes for Hermes 0.21.x on a Bot Screen host: screenshots skip the desktop panel and wait for the screen to settle, and a guard repairs SQLite files whose header a stray TLS record overwrote (checked on a copy first). | Nothing. Install it for the default profile. |
 
 Nothing here stores your documents or files, and no token ever leaves your server.
 
@@ -41,6 +42,7 @@ python -m unittest discover -s hermes-bot-mobile/tests
 python -m unittest discover -s hermes-paperless/tests
 python -m unittest discover -s hermes-drive/tests
 python -m unittest discover -s hermes-dashboard/tests
+python -m unittest discover -s hermes-bot-fixes/tests
 ```
 
 `hermes plugins validate <folder>` runs Hermes's own checks on a plugin.
