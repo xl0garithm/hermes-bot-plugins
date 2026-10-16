@@ -61,6 +61,24 @@ done = store.get_record(S.Actor.person(), records[panel]["id"])["record"]
 assert done["values"]["status"] == "Done" and done["closed_at"] and done["values"]["latest"].startswith("Panel built"), done
 print("finished: the done card's record closed with its summary:", done["values"]["latest"][:40], "...")
 
+# Blocked again for the same reason, Hermes sends a card to triage for a person: still needs you, and the answer releases it.
+loop = kb.create_task(conn, title="Send the arrival email", assignee=BOT, created_by=BOT)
+assert kb.block_task(conn, loop, reason="No email address on file")
+assert kb.unblock_task(conn, loop)
+assert kb.block_task(conn, loop, reason="No email address on file")
+assert kb.get_task(conn, loop).status == "triage", kb.get_task(conn, loop).status
+planned = kb.create_task(conn, title="Plan the week", assignee=BOT, created_by=BOT, triage=True)
+K.mirror(store, board, served)
+by_card = {record["values"]["card"]: record for record in store.query(S.Actor.bot(BOT), K.COLLECTION, {"limit": 50})["records"]}
+assert by_card[loop]["values"]["status"] == "Blocked" and by_card[loop]["values"]["why"].startswith("Blocked again"), by_card[loop]
+assert by_card[planned]["values"]["status"] == "Queued", by_card[planned]
+print("looped: a card triaged after blocking twice needs you:", by_card[loop]["values"]["why"])
+result = K.answer(store, by_card[loop]["id"], "Use the one on the booking.", board, served)
+assert result["posted"] and result["status"] in ("todo", "ready"), result
+K.answer(store, by_card[planned]["id"], "Mondays first.", board, served)
+assert kb.get_task(conn, planned).status == "triage", "a planner's triage card is not the person's to release"
+print("looped: the answer released it to", result["status"], "; a planner's triage card got the note and stayed in triage")
+
 assert K.mirror(store, board, served) == 0
 print("unchanged: a second pass writes nothing")
 conn.close()
