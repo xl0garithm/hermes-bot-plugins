@@ -159,6 +159,13 @@ look at, a status such as For review → Changes requested → Approved → Done
 what happens next in your words ("Approve and publish", "Request changes"). If you don't know what approving should do, ask
 once. One review collection can hold every kind of document you produce for them.
 
+## Background work: your kanban cards
+
+If you queue work on Hermes's kanban board (`kanban_create`, assigned to yourself), the plugin copies your open cards into
+a **Background work** collection on your dashboard by itself. Don't write to it, reshape it or retire it: it follows the
+board. A blocked card needs your person there; their note on its record is posted on the card as their answer and unblocks
+it, so the next worker reads it. To answer a card yourself, use the kanban tools, not `dashboard_record`.
+
 ## Keeping it right
 
 - **One way in:** the tools for you, `write.py` for your scripts. Never open `dashboard.db` or import the plugin's code.
