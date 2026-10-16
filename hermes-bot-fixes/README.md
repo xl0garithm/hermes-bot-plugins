@@ -26,6 +26,15 @@ and logged), so a newer Hermes that changed it simply goes unpatched.
   came after that message before the wake-up, the result is the task: nothing is restated while it is still in the chat,
   and if it was summarised away the result is restated instead (as a note row, not the person's words). A request still
   being worked on is restated as before.
+- **A background task comes back unfinished and the bot finishes it in the chat.** When a `delegate_task` result comes
+  back unfinished, Hermes wakes the bot with a note that ends "act on the result or re-dispatch", and a bot may then do
+  the rest itself, step after step, in the chat its person talks to it in. The note now ends with a hand-off: queue what
+  is left as a kanban card assigned to the bot itself (no step cap, survives restarts, retried, and a blocked card asks
+  its person), or re-dispatch it with `delegate_task` when the bot has no kanban tools, then answer in a sentence or two.
+  The note names the bot's own profile (a card for an unknown profile is never picked up) and an `idempotency_key`, so a
+  result replayed after a restart doesn't queue the work twice. Unfinished means it hit its step cap, timed out, stalled
+  or was cut off by a server restart; a stop the person pressed, an error, a cancel or a refusal to start keeps Hermes's
+  own note. For the card route a bot needs the kanban toolset (`hermes -p <bot> tools enable kanban`).
 
 ## Install
 
@@ -43,4 +52,5 @@ Then restart the dashboard and the messaging gateway.
 python -m unittest discover -s hermes-bot-fixes/tests
 ~/.hermes/hermes-agent/venv/bin/python hermes-bot-fixes/tests/integration_hermes.py [path to a Hermes checkout]
 ~/.hermes/hermes-agent/venv/bin/python hermes-bot-fixes/tests/integration_compaction.py [path to a Hermes checkout]
+~/.hermes/hermes-agent/venv/bin/python hermes-bot-fixes/tests/integration_handoff.py [path to a Hermes checkout]
 ```
