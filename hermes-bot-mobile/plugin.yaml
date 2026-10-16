@@ -1,6 +1,6 @@
 name: hermes-bot-mobile
-version: 0.1.2
-description: The HermesBot phone app's companion on this server - push notifications when a bot needs you, and live activity of bots in group rooms.
+version: 0.2.0
+description: The HermesBot phone app's companion on this server - push notifications when a bot needs you (approvals, questions, broken routines, blocked kanban cards), and live activity of bots in group rooms.
 author: Logan Carlson
 kind: standalone
 provides_hooks:
@@ -8,3 +8,4 @@ provides_hooks:
   - pre_tool_call
   - on_session_end
   - on_room_member_activity
+  - kanban_task_blocked

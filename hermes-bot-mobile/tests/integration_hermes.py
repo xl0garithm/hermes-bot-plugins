@@ -2,9 +2,10 @@
 
 Not part of the unit tests (it needs a Hermes checkout). Run it with the Hermes venv:
 
-    ~/.hermes/hermes-agent/venv/bin/python hermes-bot-mobile/tests/integration_hermes.py
+    ~/.hermes/hermes-agent/venv/bin/python hermes-bot-mobile/tests/integration_hermes.py [path to a Hermes checkout]
 
-It points HERMES_HOME at a throwaway folder, so the real `~/.hermes` is never read or written.
+It points HERMES_HOME (and the kanban board) at a throwaway folder, so the real `~/.hermes` is never read or written. With
+a Hermes that has the kanban_task_blocked hook (0.21.5+), it also blocks a real kanban card and checks the push.
 """
 
 import json
@@ -19,10 +20,11 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 PLUGIN = HERE.parent
 sys.path.insert(0, str(HERE))
-sys.path.insert(0, str(Path.home() / ".hermes" / "hermes-agent"))
+sys.path.insert(0, sys.argv[1] if len(sys.argv) > 1 else str(Path.home() / ".hermes" / "hermes-agent"))
 
 home = Path(tempfile.mkdtemp(prefix="hermes-bot-mobile-it-"))
 os.environ["HERMES_HOME"] = str(home)
+os.environ["HERMES_KANBAN_HOME"] = str(home)
 
 (home / "plugins").mkdir()
 shutil.copytree(PLUGIN, home / "plugins" / "hermes-bot-mobile", ignore=shutil.ignore_patterns("tests", "__pycache__"))
@@ -96,6 +98,38 @@ assert "secret-build-dir" not in json.dumps(message)
 arrived.clear()
 invoke_hook("on_session_end", session_id="cron_0a1b2c3d4e5f_20261014_090000", platform="cron", completed=True, failed=False, interrupted=False)
 assert not arrived.wait(2), "a routine that ran was pushed"
+
+if manager._hooks.get("kanban_task_blocked"):
+    # A worker blocks its card on the person, through Hermes's own board: the hook fires after the write and pushes.
+    from hermes_cli import kanban_db as kb  # noqa: E402
+
+    try:
+        from hermes_cli.kanban_db_connect import connect  # noqa: E402
+    except ImportError:  # before 0.21.5
+        connect = kb.connect
+
+    conn = connect()
+    task = kb.create_task(conn, title="Write the arrivals rule", assignee="default", created_by="default")
+    waiting = kb.create_task(conn, title="Send it", assignee="default", created_by="default", parents=[task])
+    arrived.clear()
+    received.clear()
+    assert kb.block_task(conn, task, reason="Which checkout date should the email use?")
+    assert arrived.wait(10), "no push for the blocked card"
+    message = json.loads(phone.read(received[0][2]))
+    print("blocked card push:", message)
+    assert message["body"].startswith("Needs you: Write the arrivals rule — Which checkout"), message
+    assert message["type"] == "Questions" and message["url"] == "hermesbot://inbox"
+
+    # A card that only waits on another card moves to todo, and is not the person's business.
+    arrived.clear()
+    kb.block_task(conn, waiting, reason="waiting on the rule", kind="dependency")
+    assert kb.get_task(conn, waiting).status == "todo"
+    assert not arrived.wait(2), "a dependency wait was pushed"
+    conn.close()
+    print("kanban: a card blocked on the person is pushed; a dependency wait is not")
+else:
+    print("kanban: this Hermes has no kanban_task_blocked hook; skipped")
+
 print("OK")
 
 server.shutdown()
