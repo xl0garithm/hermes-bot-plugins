@@ -3,6 +3,8 @@
 - computer_use screenshots that name no window skip the desktop's panels, and the screenshot after an action waits a
   moment for the screen to settle (`capture.py`).
 - A guard repairs SQLite files whose header a stray TLS record overwrote, checking a copy first (`dbguard.py`).
+- After a compaction, a request the bot already answered before a background result woke it is not handed back to it as
+  unfinished work; the result is (`compaction.py`).
 
 Install it for the default profile only: the fixes apply to the whole process, so every bot it runs is covered.
 Nothing here edits Hermes's own files; each fix checks that the code it wraps is the one it expects.
@@ -16,9 +18,10 @@ log = logging.getLogger("hermes-bot-fixes")
 
 
 def register(ctx) -> None:
-    from . import capture, dbguard
+    from . import capture, compaction, dbguard
 
     applied = capture.apply()
+    restatement = compaction.apply()
 
     def on_tool(**kw):
         # computer_use may only be importable once a turn first uses it; apply what is still missing then.
@@ -30,4 +33,4 @@ def register(ctx) -> None:
 
     ctx.register_hook("pre_tool_call", on_tool)
     started = dbguard.start()
-    log.info("hermes-bot-fixes: panels %s, settle %s, database guard %s", applied["panels"], applied["settle"], "started" if started else "already running")
+    log.info("hermes-bot-fixes: panels %s, settle %s, compaction %s, database guard %s", applied["panels"], applied["settle"], restatement, "started" if started else "already running")

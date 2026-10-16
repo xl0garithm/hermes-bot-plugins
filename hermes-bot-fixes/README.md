@@ -19,6 +19,13 @@ and logged), so a newer Hermes that changed it simply goes unpatched.
   `integrity_check` on it, and only then writes the 29 header bytes into the original, in place. Files over 512 MB (such
   as `state.db`) are reported, not repaired. Backups (the last 3 per file) and `status.json` live in
   `~/.hermes/hermes-bot-fixes/`.
+- **After a compaction, the bot redoes work it handed to a background task.** When a background result (a task finishing,
+  or a background process) wakes a bot and that turn gets compacted, Hermes skips the result's row, lands on the person's
+  last message and appends it again as "[STILL IN PROGRESS … Continue it; do not start over.]", although the bot had
+  already answered it ("running in the background"). The bot then does the whole job again itself. Now, when a plain reply
+  came after that message before the wake-up, the result is the task: nothing is restated while it is still in the chat,
+  and if it was summarised away the result is restated instead (as a note row, not the person's words). A request still
+  being worked on is restated as before.
 
 ## Install
 
@@ -35,4 +42,5 @@ Then restart the dashboard and the messaging gateway.
 ```sh
 python -m unittest discover -s hermes-bot-fixes/tests
 ~/.hermes/hermes-agent/venv/bin/python hermes-bot-fixes/tests/integration_hermes.py [path to a Hermes checkout]
+~/.hermes/hermes-agent/venv/bin/python hermes-bot-fixes/tests/integration_compaction.py [path to a Hermes checkout]
 ```
