@@ -29,18 +29,18 @@ import handoff  # noqa: E402
 
 # What delegate_tool reports for a background task that ran out of steps (exit_reason max_iterations).
 truncated = {
-    "type": "async_delegation", "delegation_id": "deleg_1", "session_key": "", "goal": "Add a visual indicator to the arrivals panel rows",
-    "context": "Red when the email is still unsent 24 hours out.", "role": "leaf", "model": "m", "status": "completed",
-    "summary": "Added the field; the panel rule is not written yet.", "api_calls": 250, "duration_seconds": 900,
+    "type": "async_delegation", "delegation_id": "deleg_1", "session_key": "", "goal": "Add a status column to the weekly report",
+    "context": "Red when a task is overdue.", "role": "leaf", "model": "m", "status": "completed",
+    "summary": "Added the column; the overdue rule is not written yet.", "api_calls": 250, "duration_seconds": 900,
     "exit_reason": "max_iterations", "dispatched_at": 0, "completed_at": 900,
 }
 finished = {**truncated, "delegation_id": "deleg_2", "exit_reason": "completed", "api_calls": 40, "summary": "Done."}
 fan_out = {
-    "type": "async_delegation", "delegation_id": "deleg_3", "is_batch": True, "goals": ["Write the rule", "Write the panel"],
+    "type": "async_delegation", "delegation_id": "deleg_3", "is_batch": True, "goals": ["Write the rule", "Write the column"],
     "status": "completed", "dispatched_at": 0, "completed_at": 900,
     "results": [
         {"task_index": 0, "status": "completed", "exit_reason": "completed", "summary": "Rule written."},
-        {"task_index": 1, "status": "completed", "exit_reason": "max_iterations", "truncated": True, "summary": "Half a panel."},
+        {"task_index": 1, "status": "completed", "exit_reason": "max_iterations", "truncated": True, "summary": "Half a column."},
     ],
 }
 
@@ -65,7 +65,7 @@ assert handoff.HEADER in after and 'assignee "zz-handoff"' in after and 'idempot
 print("after: the note ends with the hand-off, naming the chat's own profile:", 'assignee "zz-handoff"')
 
 title = prn.async_delegation_display_text(truncated)
-assert title == "Subagent Task Incomplete: Add a visual indicator to the arrivals panel rows", title
+assert title == "Subagent Task Incomplete: Add a status column to the weekly report", title
 print("unchanged: the chat's title for it:", title)
 
 assert handoff.HEADER not in in_profile(finished, "zz-handoff"), "expected no hand-off for a finished task"

@@ -109,20 +109,20 @@ if manager._hooks.get("kanban_task_blocked"):
         connect = kb.connect
 
     conn = connect()
-    task = kb.create_task(conn, title="Write the arrivals rule", assignee="default", created_by="default")
+    task = kb.create_task(conn, title="Write the weekly report", assignee="default", created_by="default")
     waiting = kb.create_task(conn, title="Send it", assignee="default", created_by="default", parents=[task])
     arrived.clear()
     received.clear()
-    assert kb.block_task(conn, task, reason="Which checkout date should the email use?")
+    assert kb.block_task(conn, task, reason="Which week should the report cover?")
     assert arrived.wait(10), "no push for the blocked card"
     message = json.loads(phone.read(received[0][2]))
     print("blocked card push:", message)
-    assert message["body"].startswith("Needs you: Write the arrivals rule — Which checkout"), message
+    assert message["body"].startswith("Needs you: Write the weekly report — Which week"), message
     assert message["type"] == "Questions" and message["url"] == "hermesbot://inbox"
 
     # A card that only waits on another card moves to todo, and is not the person's business.
     arrived.clear()
-    kb.block_task(conn, waiting, reason="waiting on the rule", kind="dependency")
+    kb.block_task(conn, waiting, reason="waiting on the report", kind="dependency")
     assert kb.get_task(conn, waiting).status == "todo"
     assert not arrived.wait(2), "a dependency wait was pushed"
     conn.close()

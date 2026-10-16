@@ -32,40 +32,40 @@ store = S.Store(root / "hermes-dashboard")
 board = K.HermesBoard()
 
 conn = connect()
-rule = kb.create_task(conn, title="Write the arrivals rule", assignee=BOT, created_by=BOT)
-panel = kb.create_task(conn, title="Build the arrivals panel", assignee=BOT, created_by=BOT)
+rule = kb.create_task(conn, title="Write the weekly report", assignee=BOT, created_by=BOT)
+panel = kb.create_task(conn, title="Build the report panel", assignee=BOT, created_by=BOT)
 other = kb.create_task(conn, title="Someone else's task", assignee="zz-other", created_by="zz-other")
-assert kb.block_task(conn, rule, reason="Which checkout date should the email use?"), "expected the card blocked"
+assert kb.block_task(conn, rule, reason="Which week should the report cover?"), "expected the card blocked"
 print("board:", {task.id: task.status for task in kb.list_tasks(conn)})
 
 K.mirror(store, board, served)
 records = {record["values"]["card"]: record for record in store.query(S.Actor.bot(BOT), K.COLLECTION, {"limit": 50})["records"]}
-assert records[rule]["values"]["status"] == "Blocked" and records[rule]["values"]["why"] == "Which checkout date should the email use?", records[rule]
+assert records[rule]["values"]["status"] == "Blocked" and records[rule]["values"]["why"] == "Which week should the report cover?", records[rule]
 assert records[panel]["values"]["status"] in ("Queued", "Running"), records[panel]
 assert other not in records
 (flagged,) = store.needs_you_records(BOT)
 assert flagged["row"]["id"] == records[rule]["id"]
 print("mirrored: the blocked card needs you, with why:", records[rule]["values"]["why"])
 
-result = K.answer(store, records[rule]["id"], "The 14th.", board, served)
+result = K.answer(store, records[rule]["id"], "Last week.", board, served)
 assert result["posted"] and result["status"] != "blocked", result
 last = kb.list_comments(conn, rule)[-1]
-assert (last.author, last.body) == (K.AUTHOR, "The 14th."), last
+assert (last.author, last.body) == (K.AUTHOR, "Last week."), last
 assert kb.get_task(conn, rule).status != "blocked"
 assert store.needs_you_records(BOT) == []
 print("answered: the note is a comment on the card from", repr(last.author), "and the card is", kb.get_task(conn, rule).status)
 
-assert kb.complete_task(conn, panel, summary="Panel built: a red dot when the email is unsent 24 hours out.")
+assert kb.complete_task(conn, panel, summary="Panel built: a red dot on overdue tasks.")
 K.mirror(store, board, served)
 done = store.get_record(S.Actor.person(), records[panel]["id"])["record"]
 assert done["values"]["status"] == "Done" and done["closed_at"] and done["values"]["latest"].startswith("Panel built"), done
 print("finished: the done card's record closed with its summary:", done["values"]["latest"][:40], "...")
 
 # Blocked again for the same reason, Hermes sends a card to triage for a person: still needs you, and the answer releases it.
-loop = kb.create_task(conn, title="Send the arrival email", assignee=BOT, created_by=BOT)
-assert kb.block_task(conn, loop, reason="No email address on file")
+loop = kb.create_task(conn, title="Send the report", assignee=BOT, created_by=BOT)
+assert kb.block_task(conn, loop, reason="No address to send it to")
 assert kb.unblock_task(conn, loop)
-assert kb.block_task(conn, loop, reason="No email address on file")
+assert kb.block_task(conn, loop, reason="No address to send it to")
 assert kb.get_task(conn, loop).status == "triage", kb.get_task(conn, loop).status
 planned = kb.create_task(conn, title="Plan the week", assignee=BOT, created_by=BOT, triage=True)
 K.mirror(store, board, served)
@@ -73,7 +73,7 @@ by_card = {record["values"]["card"]: record for record in store.query(S.Actor.bo
 assert by_card[loop]["values"]["status"] == "Blocked" and by_card[loop]["values"]["why"].startswith("Blocked again"), by_card[loop]
 assert by_card[planned]["values"]["status"] == "Queued", by_card[planned]
 print("looped: a card triaged after blocking twice needs you:", by_card[loop]["values"]["why"])
-result = K.answer(store, by_card[loop]["id"], "Use the one on the booking.", board, served)
+result = K.answer(store, by_card[loop]["id"], "Use the team list.", board, served)
 assert result["posted"] and result["status"] in ("todo", "ready"), result
 K.answer(store, by_card[planned]["id"], "Mondays first.", board, served)
 assert kb.get_task(conn, planned).status == "triage", "a planner's triage card is not the person's to release"

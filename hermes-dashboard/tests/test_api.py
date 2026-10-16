@@ -60,7 +60,7 @@ class Api(unittest.TestCase):
         self.assertEqual(self.client.get(f"{self.base}/bots").json()["bots"]["concierge"]["needs_you"], 1)
 
     def test_a_blocked_kanban_card_needs_you_and_a_note_answers_it(self):
-        card = {"board": "default", "id": "t_1", "title": "Write the arrivals rule", "assignee": "concierge", "status": "blocked", "reason": "Which date?", "latest": None, "updated": 1}
+        card = {"board": "default", "id": "t_1", "title": "Write the weekly report", "assignee": "concierge", "status": "blocked", "reason": "Which week?", "latest": None, "updated": 1}
         answered = []
 
         def answer(board, task, text):
@@ -75,9 +75,9 @@ class Api(unittest.TestCase):
             self.assertEqual(self.client.get(f"{self.base}/bots").json()["bots"]["concierge"]["needs_you"], 2)
             records = self.client.get(f"{self.base}/bots/concierge/needs-you").json()["records"]
             row = next(item["row"] for item in records if item["view"] == "background-work")
-            body = self.client.post(f"{self.base}/records/{row['id']}/notes", json={"text": "The 14th."}).json()
+            body = self.client.post(f"{self.base}/records/{row['id']}/notes", json={"text": "Last week."}).json()
             self.assertEqual(body["card"], {"card": "t_1", "posted": True, "status": "ready"})
-            self.assertEqual(answered, [("t_1", "The 14th.")])
+            self.assertEqual(answered, [("t_1", "Last week.")])
             self.assertEqual(self.client.get(f"{self.base}/bots").json()["bots"]["concierge"]["needs_you"], 1)
 
         # A note on any other record is only a note.

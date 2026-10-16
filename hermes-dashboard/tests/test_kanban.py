@@ -78,11 +78,11 @@ class Mirror(unittest.TestCase):
         return record
 
     def test_a_blocked_card_needs_you_with_why_as_its_body(self):
-        self.board.add("t_1", status="blocked", reason="Which checkout date should the email use?")
+        self.board.add("t_1", status="blocked", reason="Which week should the report cover?")
         self.assertEqual(self.mirror(), 1)
         record = self.only()
         self.assertEqual(record["values"]["status"], "Blocked")
-        self.assertEqual(record["values"]["why"], "Which checkout date should the email use?")
+        self.assertEqual(record["values"]["why"], "Which week should the report cover?")
         self.assertEqual(record["values"]["card"], "t_1")
         (flagged,) = self.store.needs_you_records("concierge")
         self.assertEqual(flagged["view_title"], K.TITLE)
@@ -114,12 +114,12 @@ class Mirror(unittest.TestCase):
     def test_a_finished_card_closes_its_record_with_its_summary(self):
         self.board.add("t_1", status="running")
         self.mirror()
-        self.board.cards[("default", "t_1")].update(status="done", latest="Built the indicator.")
+        self.board.cards[("default", "t_1")].update(status="done", latest="Built the report.")
         self.mirror()
         record = self.only()
         self.assertEqual(record["values"]["status"], "Done")
         self.assertIsNotNone(record["closed_at"])
-        self.assertEqual(record["values"]["latest"], "Built the indicator.")
+        self.assertEqual(record["values"]["latest"], "Built the report.")
         self.assertEqual(self.records(), [])
 
     def test_a_card_gone_from_the_board_closes_its_record_and_keeps_its_text(self):
@@ -151,11 +151,11 @@ class Mirror(unittest.TestCase):
         self.board.add("t_1", status="blocked", reason="Which date?")
         self.mirror()
         record = self.only()
-        self.store.add_note(YOU, record["id"], "The 14th.")
+        self.store.add_note(YOU, record["id"], "Last week.")
         K._last[0] = 0.0
-        result = K.answer(self.store, record["id"], "The 14th.", board=self.board, served=lambda profile: profile in self.served)
+        result = K.answer(self.store, record["id"], "Last week.", board=self.board, served=lambda profile: profile in self.served)
         self.assertEqual(result, {"card": "t_1", "posted": True, "status": "ready"})
-        self.assertEqual(self.board.comments, [("default", "t_1", "The 14th.")])
+        self.assertEqual(self.board.comments, [("default", "t_1", "Last week.")])
         self.assertEqual(self.only()["values"]["status"], "Queued")
         self.assertIsNone(self.only()["values"]["why"])
         self.assertEqual(self.store.needs_you_records("concierge"), [])

@@ -21,7 +21,7 @@ def make_module():
 
 
 def single(**fields):
-    return {"type": "async_delegation", "delegation_id": "deleg_1", "goal": "Add the arrivals indicator", **fields}
+    return {"type": "async_delegation", "delegation_id": "deleg_1", "goal": "Add a status column to the weekly report", **fields}
 
 
 def batch(*results):
@@ -33,7 +33,7 @@ DONE = {"status": "completed", "exit_reason": "completed", "summary": "All done.
 
 
 class HandoffTest(unittest.TestCase):
-    def format(self, evt, profile="hospitality"):
+    def format(self, evt, profile="concierge"):
         module = make_module()
         self.assertTrue(handoff.patch_notifications(module))
 
@@ -45,7 +45,7 @@ class HandoffTest(unittest.TestCase):
         self.assertTrue(text.startswith(NOTE))
         self.assertIn(handoff.HEADER, text)
         self.assertIn("The background task did not finish", text)
-        self.assertIn('assignee "hospitality"', text)
+        self.assertIn('assignee "concierge"', text)
         self.assertIn('idempotency_key "leftover-deleg_1"', text)
         self.assertIn("delegate_task", text)
 

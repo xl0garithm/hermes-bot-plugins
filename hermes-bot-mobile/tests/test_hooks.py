@@ -49,19 +49,19 @@ class Setup(unittest.TestCase):
 
 class BlockedCards(Setup):
     def block(self, task="t_1", run=7, **card):
-        self.cards[task] = {"title": "Write the arrivals rule", "status": "blocked", "loop": False, "reason": "Which checkout date?", **card}
-        self.hooks.on_kanban_blocked(task_id=task, board="default", assignee="hospitality", profile_name="hospitality", run_id=run, reason="Which checkout date?")
+        self.cards[task] = {"title": "Write the weekly report", "status": "blocked", "loop": False, "reason": "Which week?", **card}
+        self.hooks.on_kanban_blocked(task_id=task, board="default", assignee="concierge", profile_name="concierge", run_id=run, reason="Which week?")
 
     def test_a_card_blocked_on_the_person_reaches_the_phone(self):
         self.block()
         (message,) = self.sent()
         self.assertEqual(message["title"], "Hydra")
-        self.assertEqual(message["body"], "Needs you: Write the arrivals rule — Which checkout date?")
+        self.assertEqual(message["body"], "Needs you: Write the weekly report — Which week?")
         self.assertEqual(message["type"], "Questions")
         self.assertEqual(message["url"], notify.INBOX)
 
     def test_it_is_about_the_card_s_own_bot(self):
-        self.store.set_settings(None, {"hospitality": "off"})
+        self.store.set_settings(None, {"concierge": "off"})
         self.block()
         self.assertEqual(self.sent(), [])
 
@@ -84,7 +84,7 @@ class BlockedCards(Setup):
         self.assertEqual(len(self.sent()), 2)
 
     def test_a_card_the_board_cannot_read_is_not_pushed(self):
-        self.hooks.on_kanban_blocked(task_id="t_gone", board="default", assignee="hospitality", run_id=1)
+        self.hooks.on_kanban_blocked(task_id="t_gone", board="default", assignee="concierge", run_id=1)
         self.assertEqual(self.sent(), [])
 
     def test_the_hook_is_registered(self):
