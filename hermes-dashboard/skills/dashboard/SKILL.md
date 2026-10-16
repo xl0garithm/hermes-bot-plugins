@@ -132,6 +132,12 @@ feed or change-gated job, record the `feed`, and tell them what you track, what 
 
 Three to six panels that matter beat many. Put what needs them first.
 
+Rows can carry a **signal**, a small green, amber or red dot that answers one question at a glance (has this guest's email
+gone out? is this invoice paid?). Give the view `signals`, a list of `{when: <filter>, tone: good|warn|bad}`; the first that
+matches a row is its dot, and done or muted rows carry none. For example: good when `email_sent` is true, bad when it is
+false and `arrival` is `within_days` 1, warn otherwise. The plugin computes it every time the panel is read, so keep the
+fields true and the dots follow; never run a job just to recolor rows. A red row that also needs them shows the red dot.
+
 ## Drafts and buttons: offering to act
 
 When you could do the next step for them (reply to an email, book the vendor, file the document), offer it:
